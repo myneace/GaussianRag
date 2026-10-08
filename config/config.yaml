@@ -1,0 +1,46 @@
+encoder:
+  backend: "numpy"
+  # embedding_backend: "local"  → uses all-MiniLM-L6-v2 via sentence-transformers
+  # embedding_backend: "gemini_cloud" → uses Gemini Embedding 2 via OpenAI-compatible API
+  embedding_backend: "gemini_cloud"
+  dimension: 384
+  sigma_mode: "learned"
+  low_rank: 8
+  on_mismatch: "retrain"  # or "heuristic" (switches to heuristic temporarily on mismatch)
+
+  # --- Gemini Cloud Embedding settings (used when embedding_backend = "gemini_cloud") ---
+  gemini_cloud:
+    model: "gemini-embedding-2-preview"
+    # Matryoshka dimensions: 128, 256, 512, 768, 1536, or 3072 (null = model default)
+    dimensions: 768
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+    # api_key: read from GEMINI_API_KEY env var / .env file at runtime
+
+chunking:
+  max_tokens: 128
+  overlap_tokens: 16
+
+retrieval:
+  ann_candidates: 10
+  top_k: 5
+  diversity_threshold: 0.3
+  metric: "elk"
+
+generation:
+  mode: "provider"
+  provider: "mistral"
+  model: "mistral-small-latest"
+  timeout_seconds: 30.0
+
+continual_learning:
+  # If true, the system will silently "absorb" queries and retrieved contexts (radiation) 
+  # to automatically fine-tune the embedding variance (SigmaHead) in the background.
+  # If false, the system acts as a standard static RAG chat with frozen embeddings.
+  enabled: true
+  # How many new unique interactions to absorb before triggering a background training loop.
+  train_every_n: 5
+
+evaluation:
+  ambiguity_buckets:
+    medium_entropy: 2.5
+    high_entropy: 4.0
