@@ -1,0 +1,11 @@
+.env
+.gaussian_rag_store/
+knowledge.json
+.pytest_cache/
+.venv/
+__pycache__/
+*.pyc
+.full_run_store
+.visualizer
+gaussian_rag.egg-info
+data/

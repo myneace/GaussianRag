@@ -1,0 +1,7 @@
+{
+  "include": ["gaussian_rag", "tests"],
+  "extraPaths": ["."],
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "basic"
+}
