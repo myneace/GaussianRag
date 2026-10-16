@@ -2,9 +2,14 @@
 
 # Manifold — Gaussian-Clef RAG
 
-> **Probabilistic retrieval-augmented generation on statistical manifolds with sub-100ms Cloudflare Clef decision routing and Woodbury-accelerated geometric kernels.**
+> **Probabilistic retrieval-augmented generation on statistical manifolds with sub-100ms Cloudflare Clef decision routing, Woodbury-accelerated geometric kernels, and universal corpus generation.**
 >
 > Every chunk of knowledge is a Gaussian distribution, not a flat vector. Retrieval is information geometry, accelerated to production speed.
+
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Type Checked](https://img.shields.io/badge/type%20checked-pyright-green.svg)](pyproject.toml)
+[![Tests](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](tests/)
 
 ---
 
@@ -33,11 +38,18 @@ for chunk in results:
     print(f"[{chunk.rank}] {chunk.knowledge.text} (confidence: {chunk.confidence:.3f})")
 ```
 
+Ask questions with grounded answer synthesis (optional OpenAI, Gemini, or Mistral provider):
+
+```python
+answer = rag.query("How do you handle insecure superiors?")
+print(answer)
+```
+
 ---
 
 ## 🚀 Key Innovations & Architecture
 
-Gaussian-Clef RAG transforms probabilistic retrieval from a multi-second prototype into a **production-grade sub-100ms retrieval engine** by combining Information Geometry with non-autoregressive decision intelligence:
+Gaussian-Clef RAG transforms probabilistic retrieval from a multi-second research prototype into a **production-grade sub-100ms retrieval engine** by combining Information Geometry with non-autoregressive decision intelligence:
 
 | Pillar | Capability | Technical Mechanism | Latency Impact |
 |---|---|---|---|
@@ -47,6 +59,7 @@ Gaussian-Clef RAG transforms probabilistic retrieval from a multi-second prototy
 | **Taxonomy Branch Pruning** | Search space reduction | Hierarchical document clustering prunes 60–80%+ irrelevant candidate branches prior to reranking | **Eliminates 80% matrix ops** |
 | **Clef 4-Question Passage Gate** | Noise, hallucination, and contradiction filter | Evaluates candidate chunks in parallel batches for relevance, evidence, and contradictions | **Prunes 30 → top 5–8 survivors** |
 | **Universal Ingestion Engine** | Format-agnostic text processing | Natively ingests raw text, Markdown heading hierarchies, JSON/JSONL records, CSV tables, and directories | **Zero pre-processing boilerplate** |
+| **Flexible Corpus Generator** | Unstructured text normalization & caching | Cleans dirty HTML, OCR line breaks, timestamps, and adaptively structures raw text with content-addressed cache | **Instant clean corpus creation** |
 
 ---
 
@@ -90,6 +103,59 @@ Gaussian-Clef RAG transforms probabilistic retrieval from a multi-second prototy
                         │ [S6] Provider Generation  │ ── (Optional: Mistral, Gemini, OpenAI)
                         │ Grounded answer synthesis │
                         └───────────────────────────┘
+```
+
+---
+
+## 🧹 Flexible Corpus Generator & Raw Text Normalization
+
+The `gaussian_rag.creator` package features an intelligent, multi-stage text normalization and adaptive corpus generation engine. It processes messy, unstructured pasted text (HTML/web clippings, OCR/PDF line breaks, chat transcripts, unformatted text blobs) into structured corpora with content-addressed caching.
+
+### 1. Command-Line Interface (`data/generate_corpus.py`)
+
+Generate benchmark corpora or process arbitrary raw text from files or stdin:
+
+```bash
+# 1. Generate standard 48 Laws of Power benchmark corpus
+python data/generate_corpus.py --preset 48-laws -o data/48_laws_of_power.txt
+
+# 2. Pipe messy, unformatted text from stdin directly into structured JSONL
+cat raw_notes.txt | python data/generate_corpus.py --stdin -o corpus.jsonl
+
+# 3. Clean messy OCR scan text into structured Markdown with hierarchy
+python data/generate_corpus.py -i dirty_scan.txt -o clean_corpus.md -f markdown
+
+# 4. Pass raw text directly via argument
+python data/generate_corpus.py -t "Law 1: Never outshine the master..." -o laws.jsonl
+
+# 5. Optional AI-assisted normalization using OpenAI-compatible endpoints
+python data/generate_corpus.py -i ocr_scan.txt -o corpus.jsonl --ai
+```
+
+### 2. Programmatic Python Ingestion of Dirty Text
+
+Ingest unformatted, messy text directly into your RAG instance with automatic HTML stripping, OCR hyphenation fixing, and structural detection:
+
+```python
+from gaussian_rag import GaussianRAG
+
+rag = GaussianRAG.create()
+
+# Raw messy HTML/OCR text
+dirty_text = """
+<p>Law 1: Never Outshine the Master<br/>
+Always make those above you feel comfortably su-
+perior. In your desire to please them, do not go too far.</p>
+
+<p>Law 2: Never Put Too Much Trust in Friends<br/>
+Former enemies are often more loyal than friends.</p>
+"""
+
+# Normalizes, structures, embeds as Gaussians, and updates both stores in 1 call:
+rag.add_raw_text(dirty_text, title="48 Laws Excerpt")
+
+results = rag.search("How to handle superiors?")
+print(results[0].knowledge.text)
 ```
 
 ---
@@ -190,6 +256,15 @@ Validates live Clef disambiguation, taxonomy pruning, FTS5 pre-filtering, passag
 python test_48_laws_e2e.py
 ```
 
+### Ingest and Query via CLI
+```bash
+# Ingest documents into dual-store
+python -m gaussian_rag.main ingest --input data/my_docs --output .my_store
+
+# Query store with ELK metric
+python -m gaussian_rag.main query --text "How should I handle rivals?" --store .my_store --metric elk
+```
+
 ### Run Latency & Benchmark Verification
 Proves sub-100ms retrieval latency across pipeline stages:
 
@@ -197,13 +272,18 @@ Proves sub-100ms retrieval latency across pipeline stages:
 pytest tests/test_benchmark_latency.py -v
 ```
 
-### Run Library Facade & Universal Ingestion Test Suite
+### Run Test Suites
 ```bash
-pytest tests/test_library_facade.py -v
-```
+# Run corpus generator tests
+pytest tests/test_corpus_generator.py -v
 
-### Run Full Test Suite
-```bash
+# Run facade & universal ingestion tests
+pytest tests/test_library_facade.py -v
+
+# Run dual-store synchronization tests
+pytest tests/test_dual_store_sync.py -v
+
+# Run full test suite
 pytest
 ```
 
@@ -271,27 +351,54 @@ chunking:
 ```python
 import gaussian_rag as gr
 
-# Unified facade
+# 1. High-Level Facade
 rag = gr.GaussianRAG.create(
     dimension=384,
     use_clef=False,           # set True to enable Cloudflare Clef passage gating
     use_generator=False       # set True to enable LLM response generation
 )
 
-# Core components
+# 2. Universal Ingestion & Normalization
+normalizer = gr.TextNormalizer()
+clean_text = normalizer.clean("<p>Some raw text...</p>")
+
+generator = gr.CorpusGenerator()
+documents = generator.generate(clean_text, title="My Corpus")
+
+cache = gr.CorpusCache()
+assistant = gr.OpenAICorpusAssistant()
+
+# 3. Core Components
 embedder = gr.GaussianEmbedder(sigma_mode="heuristic", rank=8)
 store = gr.KnowledgeStore()
+lexical = gr.LexicalStore()
 retriever = gr.GaussianRetriever(store=store)
 ingestor = gr.UniversalIngestor(embedder, store)
 router = gr.TaxonomyRouter()
 
-# Data models
+# 4. Data Models
 from gaussian_rag import (
     GaussianKnowledge,        # 𝒩(μ, Σ) node with metadata
     QueryRepresentation,      # Query mean + covariance
     RetrievedChunk,           # Ranked chunk with confidence score & rank
+    CorpusDocument,           # Cleaned document with structure metadata
 )
 ```
+
+---
+
+## 📖 Complete Documentation Index
+
+For in-depth guides and architectural blueprints, explore the [`docs/`](docs/) directory:
+
+- [**Documentation Navigation Hub**](docs/README.md) — Unified sitemap for all guides
+- [**Codebase Architecture (`CODEBASE.md`)**](docs/initial/CODEBASE.md) — Module hierarchy and dependency map
+- [**Usage Guide (`USAGE.md`)**](docs/initial/USAGE.md) — Comprehensive developer workflows, CLI, and API examples
+- [**Pipeline Specification (`PIPELINE.md`)**](docs/initial/PIPELINE.md) — Step-by-step description of the 6-stage retrieval and dual-store ingestion pipelines
+- [**Design Decisions (`DECISIONS.md`)**](docs/initial/DECISIONS.md) — Architectural decision records (DD-01 through DD-14)
+- [**Information Geometry Theory (`THEORY.md`)**](docs/initial/THEORY.md) — Mathematical formulation of statistical manifolds and ELK
+- [**PyTorch SigmaHead (`ABOUT.md`)**](docs/ABOUT.md) — Learned covariance estimation and continual learning
+- [**Concept Blueprints (`concepts/`)**](docs/concepts/README.md) — Multi-agent disambiguation and polysemy specifications
 
 ---
 

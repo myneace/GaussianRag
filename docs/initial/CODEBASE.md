@@ -1,65 +1,79 @@
-# Codebase Structure — GaussianRAG
+# Codebase Structure — Gaussian-Clef RAG
 
-> Every module maps to a specific part of the pipeline. This document describes what each file does, what it depends on, and what it exposes.
+> Every module maps to a specific part of the dual-store, probabilistic manifold retrieval, and universal corpus generation architecture. This document describes what each file does, what it depends on, and what it exposes.
 
 ---
 
 ## Design Principles
 
-The codebase is split into three first-class sub-packages that reflect the two distinct halves of the system:
+The codebase is split into three first-class sub-packages reflecting the operational layers of the system:
 
-| Sub-package | Responsibility |
-|---|---|
-| `gaussian_rag/core/` | Shared foundation — data types, geometry, embeddings, store |
-| `gaussian_rag/creator/` | **Knowledge Base Creator** — chunking, ingestion, drift measurement |
-| `gaussian_rag/rag/` | **RAG Engine** — retrieval, disambiguation, generation, sense cache |
+| Sub-package | Responsibility | Primary Classes |
+|---|---|---|
+| `gaussian_rag/core/` | **Foundational Manifold & Storage** — mathematical representations, geometry, low-rank covariance estimators, dual-store contracts | `KnowledgeStore`, `LexicalStore`, `GaussianEmbedder`, `GaussianKnowledge`, `WoodburyMatrix` |
+| `gaussian_rag/creator/` | **Universal Ingestion & Corpus Generation** — text normalization, OCR/HTML cleanup, adaptive structure detection, content caching, format-agnostic ingestion | `UniversalIngestor`, `CorpusGenerator`, `TextNormalizer`, `CorpusCache`, `OpenAICorpusAssistant` |
+| `gaussian_rag/rag/` | **High-Speed RAG Engine** — library facade, Cloudflare Clef routing, taxonomy pruning, SQLite FTS5 pre-filtering, passage gating, Woodbury ELK reranking, generation | `GaussianRAG`, `GaussianRetriever`, `ClefClient`, `ClefPassageGate`, `TaxonomyRouter`, `ManifoldRanker` |
 
-The Creator and RAG engine only communicate through the `core/` store contract (`KnowledgeStore`). Neither package imports from the other.
+The Creator and RAG engines communicate through clean dual-store contracts: `KnowledgeStore` (for $\mathcal{N}(\mu, \Sigma)$ embeddings) and `LexicalStore` (for SQLite FTS5 BM25 pre-filtering).
 
 ---
 
 ## Directory Tree
 
 ```
-repo-root/
+GaussianRag/
 ├── config/
-│   └── config.yaml                      # Runtime configuration loaded from repo root
-├── docs/
-│   └── concepts/                        # Architecture specs and concept notes
-│       ├── README.md
-│       ├── polysemy_rag_spec.md         # Production spec: polysemy-resilient multi-agent RAG
-│       ├── polysemy_rag_gap_analysis.md # Spec-to-codebase gap mapping
-│       ├── gaussian_knowledge_graph.md  # GSKG architecture concept
-│       └── agents_implementation.md    # Brainstorm notes (superseded by polysemy_rag_spec)
+│   └── config.yaml                      # Core pipeline configuration (encoder, retrieval, chunking, Clef)
+├── dashboard/                           # React + Vite 3D Manifold visualization interface
+│   ├── src/                             # Three.js / Canvas 3D ellipsoid rendering & SSE hooks
+│   └── package.json
+├── data/
+│   ├── generate_corpus.py               # Flexible multi-source corpus generator CLI
+│   └── training/                        # Contrastive training corpus for SigmaHead
+├── docs/                                # Comprehensive documentation hub
+│   ├── README.md                        # Documentation index and navigation map
+│   ├── ABOUT.md                         # PyTorch SigmaHead & continual learning
+│   ├── initial/                         # Core architecture, USAGE, PIPELINE, DECISIONS, THEORY
+│   └── concepts/                        # Multi-agent disambiguation specifications
 ├── gaussian_rag/
-│   ├── __init__.py
-│   ├── main.py                          # CLI entrypoint — routes ingest / query / answer / visualize
-│   ├── config.py                        # Loads config/config.yaml + provider .env
+│   ├── __init__.py                      # Public API exports (GaussianRAG, stores, embedders, normalizers)
+│   ├── main.py                          # CLI entrypoint — ingest / query / answer / evaluate / visualize
+│   ├── config.py                        # YAML and environment variable configuration loader
+│   ├── py.typed                         # PEP 561 static typing marker
 │   │
-│   ├── core/                            # ── Shared foundation ──────────────────────────────
+│   ├── core/                            # ── Shared mathematical foundation & storage ───────
 │   │   ├── types.py                     # GaussianKnowledge, SenseNode, RetrievedChunk, etc.
-│   │   ├── gaussian_embedding.py        # Text → N(μ, Σ)
-│   │   ├── covariance.py               # Heuristic + learned Σ estimators
-│   │   ├── information_geometry.py      # W2, Fisher-Rao, KL, Bhattacharyya, Bures
-│   │   └── store.py                     # KnowledgeStore — persistence contract used by both halves
+│   │   ├── gaussian_embedding.py        # Text → N(μ, Σ) representation generator
+│   │   ├── covariance.py                # Diagonal + low-rank Σ estimators & Woodbury acceleration
+│   │   ├── information_geometry.py      # ELK, W2, Fisher-Rao, KL, Bhattacharyya, Bures metrics
+│   │   ├── store.py                     # KnowledgeStore — dense distribution persistence
+│   │   └── lexical_store.py             # LexicalStore — SQLite FTS5 BM25 lexical index
 │   │
-│   ├── creator/                         # ── Knowledge Base Creator ──────────────────────────
+│   ├── creator/                         # ── Knowledge Base Creation & Ingestion ───────────
+│   │   ├── text_normalizer.py           # TextNormalizer — OCR hyphenation, HTML, unicode, whitespace
+│   │   ├── corpus_generator.py          # CorpusGenerator — structure auto-detection (laws, FAQ, transcripts)
+│   │   ├── corpus_cache.py              # CorpusCache — SHA256 content-addressed generation cache
+│   │   ├── llm_assistant.py             # OpenAICorpusAssistant — AI-assisted parsing helper
+│   │   ├── universal_ingestor.py        # UniversalIngestor — format-agnostic ingestion adapter
 │   │   ├── chunker.py                   # Sentence-aware token-bounded chunk splitter
-│   │   ├── ingestion.py                 # IngestionPipeline — chunk → embed → store
-│   │   └── drift.py                     # W2-based knowledge drift measurement
+│   │   └── ingestion.py                 # IngestionPipeline (legacy single-store adapter)
 │   │
-│   ├── rag/                             # ── RAG Engine ──────────────────────────────────────
+│   ├── rag/                             # ── RAG Engine & Library Facade ────────────────────
+│   │   ├── facade.py                    # GaussianRAG — high-level 3-line public facade
+│   │   ├── clef_client.py               # ClefClient — Cloudflare Workers AI Clef client
 │   │   ├── sense_cache.py               # Session-scoped SenseNode TTL store
 │   │   │
-│   │   ├── retrieval/                   # Candidate retrieval and ranking
+│   │   ├── retrieval/                   # Sub-100ms candidate retrieval and ranking
+│   │   │   ├── taxonomy_router.py       # TaxonomyRouter — hierarchical document cluster pruning
+│   │   │   ├── clef_passage_gate.py     # ClefPassageGate — 4-question contradiction/relevance filter
 │   │   │   ├── ann_index.py             # μ-space approximate nearest-neighbour index
-│   │   │   ├── manifold_ranker.py       # Exact ELK / W2 / FR re-ranking
+│   │   │   ├── manifold_ranker.py       # Vectorized Woodbury ELK and W2 re-ranking
 │   │   │   ├── diversity.py             # W2-based diversity filter
 │   │   │   ├── uncertainty_weighter.py  # Confidence-weighted scoring
-│   │   │   ├── retriever.py             # GaussianRetriever — orchestrates retrieve / multi-sense
-│   │   │   └── visualizer.py            # Interactive 3D Plotly knowledge-field visualisation
+│   │   │   ├── retriever.py             # GaussianRetriever — hybrid dual-store candidate selection
+│   │   │   └── visualizer.py            # Interactive 3D Plotly knowledge-field visualizer
 │   │   │
-│   │   ├── disambiguation/              # 5-agent polysemy resolution
+│   │   ├── disambiguation/              # 5-agent polysemy resolution pipeline
 │   │   │   ├── query_dissolver.py       # Agent 0 — ambiguity detection + interpretation draft
 │   │   │   ├── sense_generator.py       # Agent 1 — prompt assembly / sense shaping
 │   │   │   ├── domain_grounder.py       # Agent 2 — manifold-grounded confidence scoring
@@ -74,293 +88,125 @@ repo-root/
 │   │       ├── provider.py              # MistralChatClient — env-backed HTTP call
 │   │       └── generator.py             # SimpleGenerator + ProviderBackedGenerator
 │   │
-│   ├── manifold/                        # SPD helpers and coverage utilities
-│   ├── training/                        # Sigma-head fitting, contrastive losses, trainer
-│   ├── evaluation/                      # Demo benchmark loader and retrieval metrics
-│   └── experiments/                     # Executable phase experiments (phase1–4, ablation)
-├── scripts/
-│   ├── polysemy_demo.py                 # End-to-end disambiguation + retrieval demo
-│   └── validate_manifold.py             # W2-based manifold audit tool
-├── tests/
-│   └── test_pipeline.py                 # Pipeline-focused test suite
-├── pyproject.toml
-└── README.md
+│   ├── manifold/                        # SPD cone helpers, tangent projections, coverage
+│   ├── training/                        # SigmaHead PyTorch models, contrastive losses, trainer
+│   └── evaluation/                      # Benchmark loaders and retrieval metrics (nDCG, Recall)
+├── dashboard_server.py                  # FastAPI telemetry backend broadcasting live stage timings
+├── test_48_laws_e2e.py                  # Live 48 Laws of Power end-to-end benchmark
+├── tests/                               # Comprehensive unit and integration test suite
+├── pyproject.toml                       # Standalone packaging metadata and dependencies
+└── README.md                            # Project overview and quick start guide
 ```
 
 ---
 
-## Module Details
+## Core Module Specifications
 
-### `core/types.py`
+### 1. `gaussian_rag/rag/facade.py` (`GaussianRAG`)
 
-The central data types. Everything else builds on these.
-
-```python
-@dataclass
-class GaussianKnowledge:
-    id: str
-    text: str
-    mu: np.ndarray          # shape: (d,)
-    sigma_diag: np.ndarray  # shape: (d,)    diagonal component of Σ
-    sigma_L: np.ndarray     # shape: (d, r)  low-rank component of Σ
-    confidence: float       # scalar: 1 / (1 + tr(Σ))
-    metadata: dict
-
-@dataclass
-class SenseNode:
-    sense_id: str           # stable hash of (term, domain, retrieval_query)
-    term: str
-    domain: str
-    confidence: float
-    context_hints: list[str]
-    supporting_evidence: list[str]
-    retrieval_query: str
-    mu_anchor: np.ndarray | None
-    sigma_anchor: np.ndarray | None
-    sigma_L_anchor: np.ndarray | None
-    ttl_hours: float        # TTL for SenseCache expiry
-    version: int
-    created_at: float
-
-@dataclass
-class RetrievedChunk:
-    knowledge: GaussianKnowledge
-    w2_distance: float
-    fr_distance: float | None
-    elk_score: float | None
-    confidence: float
-    uncertainty_label: str  # "high" | "medium" | "low"
-    rank: int
-```
-
----
-
-### `core/store.py`
-
-Shared persistence contract used by both the Creator (write path) and the RAG engine (read path). Neither half imports from the other — only from `core`.
+The primary public entrypoint providing a unified high-level interface:
 
 ```python
-class KnowledgeStore:
-    def add(self, chunks: list[GaussianKnowledge]) -> None
-    def get(self, ids: list[str]) -> list[GaussianKnowledge]
-    def values(self) -> list[GaussianKnowledge]
+class GaussianRAG:
+    @classmethod
+    def create(cls, store_dir: str | Path | None = None, dimension: int = 384, ...) -> "GaussianRAG"
+    def add_texts(self, texts: list[str], metadata: list[dict] | None = None) -> list[GaussianKnowledge]
+    def add_raw_text(self, raw_text: str, title: str | None = None, ...) -> list[GaussianKnowledge]
+    def add_markdown(self, markdown_text: str, document_id: str | None = None) -> list[GaussianKnowledge]
+    def add_records(self, records: list[dict], text_field: str = "text", ...) -> list[GaussianKnowledge]
+    def add_file(self, file_path: str | Path) -> list[GaussianKnowledge]
+    def add_directory(self, dir_path: str | Path) -> list[GaussianKnowledge]
+    def search(self, query: str, top_k: int = 5, metric: str = "elk") -> list[RetrievedChunk]
+    def query(self, question: str, top_k: int = 5) -> str
     def save(self, directory: str | Path) -> None
     @classmethod
-    def load(cls, directory: str | Path) -> "KnowledgeStore"
+    def load(cls, directory: str | Path) -> "GaussianRAG"
 ```
 
----
+### 2. `gaussian_rag/creator/universal_ingestor.py` (`UniversalIngestor`)
 
-### `core/gaussian_embedding.py`
+Universal format-agnostic adapter indexing into `KnowledgeStore` and `LexicalStore` in lockstep:
 
-Encodes text into $\mathcal{N}(\mu, \Sigma)$.
+- Parses strings, Markdown heading trees, JSON/JSONL dictionaries, and CSV files.
+- Automatically synchronizes $\mathcal{N}(\mu, \Sigma)$ nodes and SQLite FTS5 rows with identical chunk IDs.
 
-```python
-class GaussianEmbedder:
-    def encode(self, text: str) -> GaussianKnowledge
-    def encode_batch(self, texts: list[str]) -> list[GaussianKnowledge]
-    def encode_query(self, query: str, with_covariance: bool = False) -> QueryRepresentation
-    def encode_sense(self, sense: SenseNode) -> GaussianKnowledge
-```
+### 3. `gaussian_rag/creator/corpus_generator.py` & `text_normalizer.py`
 
-**Dependencies:** `core/covariance.py`, `training/sigma_head.py`
+Processes arbitrary, unformatted, messy pasted text into clean corpora:
 
----
+- **`TextNormalizer`**: Cleans HTML tags/entities, fixes OCR line-break hyphenation (`word-\nbreak`), unwraps soft wraps, removes running headers/footers, and normalizes unicode whitespace.
+- **`CorpusGenerator`**: Adaptively detects document structure (`numbered_section`, `qa_pair`, `transcript`, `semantic_chunk`) and serializes to JSONL, clean Markdown with breadcrumbs, and plain text.
+- **`CorpusCache`**: Content-addressed SHA-256 cache avoiding redundant parsing and embedding.
 
-### `core/information_geometry.py`
+### 4. `gaussian_rag/core/lexical_store.py` (`LexicalStore`)
 
-All distance metrics between Gaussians.
+Embedded SQLite FTS5 full-text search engine:
 
-```python
-def wasserstein2(g1: GaussianKnowledge, g2: GaussianKnowledge) -> float
-def fisher_rao(g1: GaussianKnowledge, g2: GaussianKnowledge) -> float
-def kl_divergence(g1: GaussianKnowledge, g2: GaussianKnowledge) -> float
-def bhattacharyya(g1: GaussianKnowledge, g2: GaussianKnowledge) -> float
-def bures_metric(S1: np.ndarray, S2: np.ndarray) -> float
-```
+- Operates in WAL mode with busy timeout handling.
+- `passages_fts` table indexes chunk IDs, titles, and raw text.
+- Provides BM25 lexical candidate pre-filtering in <2ms with Boolean-aware query sanitization.
 
-**Note:** `fisher_rao` uses diagonal approximation for tractability.
+### 5. `gaussian_rag/core/covariance.py` & Low-Rank ELK Acceleration
 
----
+Eliminates the $O(d^3)$ bottleneck in Expected Likelihood Kernel evaluation:
 
-### `creator/ingestion.py`
+- Implements `WoodburyMatrix` for $(\text{diag}(v) + LL^T)^{-1}$ inversion in $O(d \cdot r^2)$.
+- Evaluates log determinants via the **Sylvester Determinant Theorem** in $O(r^3)$ instead of full matrix factorizations.
 
-IngestionPipeline — the write path into a KnowledgeStore.
+### 6. `gaussian_rag/rag/retrieval/retriever.py` (`GaussianRetriever`)
 
-```python
-class IngestionPipeline:
-    def __init__(self, embedder: GaussianEmbedder, config: ChunkingConfig)
-    def ingest_document(self, text: str, document_id: str) -> list[GaussianKnowledge]
-    def ingest_directory(self, input_dir: Path) -> list[GaussianKnowledge]
-```
+Hybrid dual-store candidate selection and reranking:
 
-**Dependencies:** `creator/chunker.py`, `core/gaussian_embedding.py`, `core/store.py`
+- Retrieves top lexical hits from `LexicalStore` and top semantic hits from ANN index.
+- Fuses candidate pools to guarantee keyword/entity recall.
+- Dispatches candidates through `ClefPassageGate` before `ManifoldRanker` Woodbury scoring.
 
----
+### 7. `gaussian_rag/rag/clef_client.py` & `clef_passage_gate.py`
 
-### `creator/chunker.py`
+Cloudflare Workers AI Clef client:
 
-```python
-def split_into_chunks(text: str, *, max_tokens: int = 128, overlap: int = 16) -> list[str]
-```
-
-Sentence-aware splitter with sliding overlap. Chunking granularity directly affects Σ quality.
-
----
-
-### `creator/drift.py`
-
-Measures W2-based knowledge drift between two store snapshots.
-
-```python
-def measure_drift(previous: list[GaussianKnowledge], current: list[GaussianKnowledge]) -> list[DriftMeasurement]
-def mean_drift(previous: list[GaussianKnowledge], current: list[GaussianKnowledge]) -> float
-```
-
----
-
-### `rag/sense_cache.py`
-
-Session-scoped TTL store for SenseNode objects. Mirrors the KnowledgeStore interface but operates on senses rather than knowledge chunks.
-
-```python
-class SenseCache:
-    def upsert(self, nodes: list[SenseNode]) -> None
-    def get_by_term(self, term: str) -> list[SenseNode]
-    def context_window(self) -> list[str]   # active sense_ids
-    def prune_expired(self) -> int
-    def save(self, directory: str | Path) -> None
-    @classmethod
-    def load(cls, directory: str | Path) -> "SenseCache"
-```
-
----
-
-### `rag/retrieval/retriever.py`
-
-Main retrieval interface. Orchestrates ANN → exact ELK/W2/FR ranking → diversity filter.
-
-```python
-class GaussianRetriever:
-    def retrieve(self, query: QueryRepresentation, top_k: int = 5, metric: str = "elk") -> list[RetrievedChunk]
-    def retrieve_with_diversity(self, query: QueryRepresentation, top_k: int = 5) -> list[RetrievedChunk]
-    def retrieve_multi_sense(
-        self,
-        senses: list[tuple[str, float, QueryRepresentation]],
-        top_k: int = 5,
-        metric: str = "elk",
-        fusion: str = "interleave",
-    ) -> tuple[dict[str, list[RetrievedChunk]], list[RetrievedChunk]]
-```
-
----
-
-### `rag/retrieval/visualizer.py`
-
-Interactive 3D PCA + Plotly visualisation of the Gaussian knowledge field.
-
-```python
-def generate_visualization(store_path: str | Path, output_dir: str | Path) -> str
-```
-
----
-
-### `rag/disambiguation/pipeline.py`
-
-Top-level entry point for the 5-agent polysemy resolution pipeline.
-
-```python
-def disambiguate(
-    text: str,
-    embedder: GaussianEmbedder,
-    cache: SenseCache,
-    retriever: GaussianRetriever | None = None,
-    llm_caller: Callable[[str], str] | None = None,
-) -> DisambiguationPacket
-```
-
-**Agent chain:** `query_dissolver` → `sense_generator` → `domain_grounder` → `field_mapper` → `memory_packager` → `router`
-
----
-
-### `rag/generation/generator.py`
-
-```python
-class SimpleGenerator:
-    def generate(self, query: str, retrieved: list[RetrievedChunk]) -> dict[str, str]
-
-class ProviderBackedGenerator:
-    def generate(self, query: str, retrieved: list[RetrievedChunk]) -> dict[str, str]
-```
-
-`ProviderBackedGenerator` calls `MistralChatClient` using env-configured credentials and refuses to silently fall back to template output.
+- Evaluates non-autoregressive decision questions (`choice`, `noul`, `score`) in parallel batches.
+- Prunes noisy, irrelevant, and contradictory passages down to high-signal survivors.
 
 ---
 
 ## Dependency Graph
 
 ```
-core/types.py  (GaussianKnowledge, SenseNode, RetrievedChunk, DisambiguationPacket, …)
+gaussian_rag/core/types.py
     ↑
-core/information_geometry.py ← core/covariance.py
-    ↑                                ↑
-core/gaussian_embedding.py     training/sigma_head.py ← training/losses.py ← training/trainer.py
+gaussian_rag/core/information_geometry.py ← gaussian_rag/core/covariance.py (Woodbury)
+    ↑                                               ↑
+gaussian_rag/core/gaussian_embedding.py             gaussian_rag/core/lexical_store.py (SQLite FTS5)
+    ↑                                               ↑
+gaussian_rag/core/store.py ─────────────────────────┘
     ↑
-core/store.py
-  ↗              ↖
-creator/          rag/
-  chunker.py       sense_cache.py
-  ingestion.py     retrieval/
-  drift.py           ann_index.py → manifold_ranker.py → diversity.py → retriever.py
-                   disambiguation/
-                     query_dissolver → domain_grounder → field_mapper → memory_packager → router → pipeline
-                   generation/
-                     context_builder → generator
+    ├── creator/
+    │     ├── text_normalizer.py
+    │     ├── corpus_generator.py ← corpus_cache.py & llm_assistant.py
+    │     └── universal_ingestor.py (dual-indexes KnowledgeStore + LexicalStore)
+    │
+    └── rag/
+          ├── clef_client.py
+          ├── retrieval/
+          │     ├── taxonomy_router.py
+          │     ├── clef_passage_gate.py
+          │     ├── ann_index.py
+          │     ├── manifold_ranker.py (Woodbury ELK)
+          │     └── retriever.py (Hybrid Dual-Store)
+          └── facade.py (GaussianRAG)
 ```
-
-The `creator/` and `rag/` packages share **no direct imports**. All data flows through `core/store.py`.
 
 ---
 
-## Tech Stack
+## Execution Entry Points
 
-| Component | Library | Version |
+| Tool / Command | File | Description |
 |---|---|---|
-| Text encoding | Local MiniLM or Gemini Cloud (config-driven) | bundled config + provider deps |
-| ANN index | NumPy linear scan (`rag/retrieval/ann_index.py`) | bundled |
-| Manifold ops | `numpy`, `scipy` | latest |
-| Σ estimation | Heuristic or learned (`core/covariance.py`) | bundled |
-| Disambiguation | 5-agent pipeline (`rag/disambiguation/`) | bundled |
-| LLM generation | Env-backed Mistral (`rag/generation/provider.py`) | bundled + `httpx` |
-| Benchmarks | Demo benchmark scaffold (`evaluation/`) | bundled |
-| Config | `pyyaml` | latest |
-| Notebooks | `jupyter`, `matplotlib` | latest |
-
----
-
-## Entry Points
-
-```bash
-# Ingest .txt documents into a local store
-uv run python -m gaussian_rag.main ingest --input my_docs --output .gaussian_rag_store
-
-# Query an ingested store
-uv run python -m gaussian_rag.main query --store .gaussian_rag_store --text "What is the mechanism of action?" --top-k 5
-
-# Generate a provider-backed answer over an ingested store
-uv run python -m gaussian_rag.main answer --store .gaussian_rag_store --text "Summarize the mechanism of action" --top-k 5
-
-# Generate an interactive 3D visualisation of the knowledge field
-uv run python -m gaussian_rag.main visualize --store .gaussian_rag_store --output .visualizer
-
-# Run demo-only retrieval / evaluation flows
-uv run python -m gaussian_rag.main demo-query --text "ambiguous treatment guidance" --top-k 5
-uv run python -m gaussian_rag.main evaluate --benchmark demo --split test
-
-# Run ablation
-uv run python -m gaussian_rag.main ablation
-```
-
-`ingest` runs through `creator/ingestion.py` → `core/store.py` (write).  
-`query` and `answer` load the persisted store via `core/store.py` and route through `rag/retrieval/retriever.py` (read).  
-`answer` calls `rag/generation/generator.py` and requires `MISTRAL_API_KEY` in the environment or `.env`.
+| **Python Facade** | `from gaussian_rag import GaussianRAG` | 3-line high-level Python API for application integration |
+| **Corpus Generator CLI** | `data/generate_corpus.py` | Command-line tool for raw text normalization, presets, and AI structuring |
+| **Telemetry Server** | `dashboard_server.py` | FastAPI SSE server streaming real-time stage latencies |
+| **3D Dashboard** | `dashboard/` | Interactive Vite/React 3D manifold visualizer |
+| **CLI Commands** | `gaussian_rag/main.py` | Subcommands: `ingest`, `query`, `answer`, `polysemy-query`, `visualize` |
+| **End-to-End Test** | `test_48_laws_e2e.py` | Full validation script on *The 48 Laws of Power* |
+| **Test Suite** | `pytest` | Comprehensive unit and integration tests |

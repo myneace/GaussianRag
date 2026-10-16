@@ -1,389 +1,281 @@
-# Usage Guide — GaussianRAG
+# Usage Guide — Gaussian-Clef RAG
 
-> How to install, add documents, run the pipeline, run queries (including polysemy-aware), and run the test suite.
+> Comprehensive developer guide: installation, high-level Python API, flexible corpus generation CLI, hybrid dual-store search, telemetry dashboard, and evaluation suites.
 
 ---
 
 ## 1. Installation
 
+Install the library in editable mode with standard tools or `uv`:
+
 ```bash
-# Clone and enter the repo
-git clone <repo-url> && cd manifold
+# Clone the repository
+git clone <repo-url> && cd manifold/GaussianRag
 
-# Sync dependencies (uses uv — https://docs.astral.sh/uv/)
+# Install standalone library with pip
+pip install -e .
+
+# Alternatively, sync dependencies using uv
 uv sync
-
-# Install dev extras (required for running tests)
-uv sync --extra dev
 ```
 
-> **Note:** `sentence-transformers` is downloaded on first run. `all-MiniLM-L6-v2` (~90 MB) will be fetched from HuggingFace and cached automatically.
+> **Note:** On first execution, the default local embedding model `sentence-transformers/all-MiniLM-L6-v2` (~90 MB) will be downloaded and cached automatically. No external API keys are required for local operation.
 
 ---
 
-## 2. Configuration
+## 2. Configuration & Environment Variables
 
-### Environment file
+Copy `.env.example` to `.env`:
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your values:
+Set environment variables as needed:
 
-```bash
-# Required only for `answer` and `polysemy-query` commands
-MISTRAL_API_KEY="sk-..."
-MISTRAL_BASE_URL="https://api.mistral.ai/v1/chat/completions"
-MISTRAL_MODEL="mistral-small-latest"
+```ini
+# Optional Cloudflare Workers AI (Enables Clef decision routing & passage gating)
+CLOUDFLARE_ACCOUNT_ID="your_cloudflare_account_id"
+CLOUDFLARE_API_TOKEN="your_cloudflare_api_token"
 
-# Optional overrides
-GAUSSIAN_RAG_STORE_PATH=".gaussian_rag_store"   # default store location
-GAUSSIAN_RAG_TOP_K=5                            # default retrieval top-k
+# Optional Cloud LLM Generation (OpenAI / Gemini / Mistral)
+GEMINI_API_KEY="your_gemini_key"
+OPENAI_API_KEY="your_openai_key"
+MISTRAL_API_KEY="your_mistral_key"
+
+# Optional Store & Runtime Defaults
+GAUSSIAN_RAG_STORE_PATH=".gaussian_rag_store"
+GAUSSIAN_RAG_TOP_K=5
 ```
 
-### Config file
-
-Pipeline settings live in `config/config.yaml`. Run from the **repo root** so the config is found correctly.
+Pipeline hyper-parameters reside in `config/config.yaml`:
+- `encoder.embedding_backend`: `"local"` or `"gemini_cloud"`
+- `encoder.dimension`: `384` (for MiniLM) or `768` (for Gemini)
+- `encoder.low_rank`: `8` (rank of covariance factor $L$)
+- `retrieval.metric`: `"elk"` (Woodbury-accelerated Expected Likelihood Kernel)
 
 ---
 
-## 3. Adding Your Own Documents
+## 3. High-Level Python API (`GaussianRAG`)
 
-Documents must be plain `.txt` files. Drop them into a directory:
+The `GaussianRAG` facade provides a clean, unified interface for ingestion, storage, search, and answer generation.
 
-```
-my_docs/
-├── document_a.txt
-├── document_b.txt
-└── subdirectory/
-    └── document_c.txt
-```
+### 3.1 Basic Usage
 
-Or pass a single `.txt` file directly to `--input`.
+```python
+from gaussian_rag import GaussianRAG
 
-**Ingest them into a local store:**
+# 1. Initialize local instance (zero API keys required)
+rag = GaussianRAG.create()
 
-```bash
-uv run python -m gaussian_rag.main ingest \
-  --input my_docs \
-  --output .gaussian_rag_store
-```
+# 2. Add texts
+rag.add_texts([
+    "Never outshine the master. Make those above you feel comfortably superior.",
+    "Always say less than necessary. When you try to impress people with words, the more you say, the more common you appear.",
+    "Conceal your intentions. Keep people off-balance and in the dark by never revealing the purpose behind your actions.",
+])
 
-This recursively finds all `.txt` files, chunks and embeds them as Gaussians, and writes a persistent JSON store to `.gaussian_rag_store/`.
+# 3. Search using Woodbury-accelerated ELK
+results = rag.search("How should I behave around superiors?", top_k=3)
+for chunk in results:
+    print(f"[{chunk.rank}] (Confidence: {chunk.confidence:.3f}) {chunk.knowledge.text}")
 
-Sample output:
-
-```json
-{
-  "input": "my_docs",
-  "output": ".gaussian_rag_store",
-  "documents": 3,
-  "chunks": 12
-}
+# 4. Generate grounded answer (uses configured provider or SimpleGenerator)
+answer = rag.query("How do you handle insecure leaders?")
+print(answer)
 ```
 
-Prepare one or more UTF-8 `.txt` files in a local directory of your choice:
+### 3.2 Ingesting Raw Messy Text with Normalization
 
-```bash
-uv run python -m gaussian_rag.main ingest \
---input my_docs \
-  --output .gaussian_rag_store
+```python
+dirty_html = """
+<p>Law 1: Never Outshine the Master<br/>
+Always make those above you feel comfortably su-
+perior. In your desire to please them, do not go too far.</p>
+
+<p>Law 2: Never Put Too Much Trust in Friends<br/>
+Former enemies are often more loyal than friends.</p>
+"""
+
+# Automatically cleans HTML, repairs hyphenated line wraps, and structures chunks:
+rag.add_raw_text(dirty_html, title="48 Laws Excerpt")
+```
+
+### 3.3 Universal Format Ingestion
+
+```python
+# Markdown with heading hierarchy
+rag.add_markdown("""# Company Handbook
+## Vacation Policy
+Employees receive 20 days paid leave per year.
+## Remote Work
+Hybrid schedules require two office days per week.
+""", document_id="handbook")
+
+# Structured JSON / JSONL records
+rag.add_records([
+    {"id": "faq_01", "text": "Returns accepted within 30 days.", "category": "Returns"},
+    {"id": "faq_02", "text": "Warranty lasts 12 months.", "category": "Support"}
+], text_field="text", id_field="id")
+
+# Files and entire directory trees
+rag.add_file("docs/whitepaper.md")
+rag.add_directory("knowledge_base/")
+```
+
+### 3.4 Persistence (Save & Load)
+
+```python
+# Save knowledge store and SQLite FTS5 index to disk
+rag.save(".my_knowledge_store")
+
+# Load saved store in one line
+loaded_rag = GaussianRAG.load(".my_knowledge_store")
+results = loaded_rag.search("vacation allowance", top_k=3)
 ```
 
 ---
 
-## 4. Running the Pipeline
+## 4. Flexible Corpus Generator CLI (`data/generate_corpus.py`)
 
-All commands must be run **from the repo root**.
-
-### 4.1 Standard Query (ELK retrieval)
-
-Returns the top-k highest-overlap chunks from your ingested store.
+The multi-source corpus generator transforms arbitrary unformatted text into structured corpora (JSONL, Markdown, plain text) with SHA256 content-addressed caching.
 
 ```bash
-uv run python -m gaussian_rag.main query \
+# 1. Preset 48 Laws of Power benchmark corpus
+python data/generate_corpus.py --preset 48-laws -o data/48_laws_of_power.txt
+
+# 2. Pipe unformatted text from stdin into JSONL
+cat raw_notes.txt | python data/generate_corpus.py --stdin -o corpus.jsonl
+
+# 3. Clean messy OCR scan text into structured Markdown
+python data/generate_corpus.py -i dirty_scan.txt -o clean_corpus.md -f markdown
+
+# 4. Supply raw text string directly
+python data/generate_corpus.py -t "Law 1: Never outshine the master..." -o laws.jsonl
+
+# 5. Enable OpenAI-compatible AI assistant for difficult OCR repairs
+python data/generate_corpus.py -i ocr_scan.txt -o corpus.jsonl --ai
+```
+
+### Supported CLI Options
+
+| Flag | Argument | Description |
+|---|---|---|
+| `--preset` | `48-laws` | Generate built-in benchmark dataset |
+| `-i`, `--input` | `FILE` | Path to raw input file |
+| `-t`, `--text` | `STRING` | Raw unformatted text string |
+| `--stdin` | _(flag)_ | Read raw text piped from standard input |
+| `-o`, `--output` | `FILE` | Target output path (defaults to stdout) |
+| `-f`, `--format` | `jsonl \| markdown \| text` | Output formatting (inferred from `-o` extension if omitted) |
+| `--ai` | _(flag)_ | Enable OpenAI-compatible LLM structuring assistant |
+| `--no-cache` | _(flag)_ | Bypass content-addressed hash cache |
+| `--chunk-size` | `INTEGER` | Chunk token length (default: 150) |
+
+---
+
+## 5. Command-Line RAG Operations (`main.py`)
+
+### 5.1 Ingest Documents into Dual-Store
+
+Ingests documents into both `KnowledgeStore` and SQLite FTS5 `LexicalStore`:
+
+```bash
+python -m gaussian_rag.main ingest \
+  --input data/my_docs \
+  --output .gaussian_rag_store
+```
+
+### 5.2 Query Knowledge Store (ELK Retrieval)
+
+```bash
+python -m gaussian_rag.main query \
   --store .gaussian_rag_store \
-  --text "What are the treatment options for mitral valve regurgitation?" \
+  --text "How should I handle insecure leaders?" \
+  --top-k 5 \
+  --metric elk
+```
+
+### 5.3 Answer Generation (Provider-Backed)
+
+```bash
+python -m gaussian_rag.main answer \
+  --store .gaussian_rag_store \
+  --text "Summarize strategies for managing powerful superiors" \
   --top-k 3
 ```
 
-**Output** (JSON):
-```json
-[
-  {
-    "rank": 1,
-    "id": "medical-chunk-0",
-    "confidence": 0.91,
-    "uncertainty_label": "low",
-    "w2_distance": 0.124,
-    "fr_distance": null,
-    "elk_score": -0.018,
-    "text": "Mitral valve regurgitation..."
-  },
-  ...
-]
-```
-
-Switch to Fisher-Rao metric:
+### 5.4 Polysemy-Aware Query Disambiguation
 
 ```bash
-uv run python -m gaussian_rag.main query \
-  --store .gaussian_rag_store \
-  --text "ambiguous legal precedent" \
-  --metric fisher_rao \
-  --top-k 5
-```
-
-### 4.2 Polysemy-Aware Query (Disambiguation Pipeline)
-
-For queries containing ambiguous terms (e.g. "Apple", "bank", "trial"), the 5-agent disambiguation pipeline fires first, then routes to single- or dual-sense retrieval based on entropy.
-
-```bash
-uv run python -m gaussian_rag.main polysemy-query \
+python -m gaussian_rag.main polysemy-query \
   --store .gaussian_rag_store \
   --text "What are the outcomes of the Apple trial?" \
   --top-k 3
 ```
 
-**Requires:** `MISTRAL_API_KEY` set in `.env` — Agent 1 (Sense Generator) calls the LLM.
-
-**Output** (JSON):
-```json
-{
-  "query": "What are the outcomes of the Apple trial?",
-  "senses_detected": 2,
-  "entropy": 1.82,
-  "fallback_triggered": false,
-  "selected_sense_id": null,
-  "context_prompt": "[Sense A: technology/corporate]\n..."
-}
-```
-
-| `entropy` | Routing |
-|---|---|
-| ≤ 1.5 bits | Single-sense — top match returned directly |
-| 1.5 – 2.5 bits | Dual-sense — top-2 senses retrieved in parallel, results interleaved |
-| > 2.5 bits | Fallback — broad retrieval, `[Sense A] / [Sense B]` tagged output |
-
-### 4.3 Answer Generation (Retrieval + LLM)
-
-Retrieves context from the store and generates a full answer via Mistral.
+### 5.5 Interactive 3D Plotly Visualization
 
 ```bash
-uv run python -m gaussian_rag.main answer \
-  --store .gaussian_rag_store \
-  --text "Summarize the ambiguity in legal precedent across jurisdictions" \
-  --top-k 3
-```
-
-**Requires:** `MISTRAL_API_KEY` in `.env`, `generation.mode=provider` and `generation.provider=mistral` in `config/config.yaml`.
-
-**Output** (JSON):
-```json
-{
-  "query": "Summarize the ambiguity...",
-  "retrieved": [...],
-  "answer": "Legal precedent varies significantly across jurisdictions...",
-  "prompt": "..."
-}
-```
-
-### 4.4 Demo Commands (No Ingest Required)
-
-These use a built-in 3-document corpus and don't need a persisted store.
-
-```bash
-# Demo retrieval — built-in medical/legal/scientific corpus
-uv run python -m gaussian_rag.main demo-query \
-  --text "ambiguous treatment guidance" \
-  --top-k 3
-
-# Demo evaluation — runs nDCG@k and Recall@k on built-in benchmark
-uv run python -m gaussian_rag.main evaluate \
-  --benchmark demo \
-  --split test \
-  --top-k 3
-
-# Ablation run — compares retrieval metrics across configurations
-uv run python -m gaussian_rag.main ablation
-```
-
-### 4.5 Field Visualization
-
-Generate an interactive 3D topological map of your knowledge field. Concepts are clustered by semantic similarity (PCA-reduced means), while sphere sizes represent distributional entropy (uncertainty).
-
-```bash
-uv run python -m gaussian_rag.main visualize \
+python -m gaussian_rag.main visualize \
   --store .gaussian_rag_store \
   --output .visualizer
 ```
 
-**Output:** Generates `.visualizer/index.html`.
-
-To view it locally:
-```bash
-python3 -m http.server 8000 --directory .visualizer
-```
-Then open [http://localhost:8000](http://localhost:8000) in your browser.
+Open `.visualizer/index.html` in your browser to inspect the semantic manifold.
 
 ---
 
-## 5. CLI Reference
+## 6. 3D Manifold Dashboard & Telemetry Server
 
-| Command | Required args | Optional args | Notes |
-|---|---|---|---|
-| `ingest` | `--input PATH` | `--output PATH` (default: `.gaussian_rag_store`) | Accepts a `.txt` file or directory of `.txt` files |
-| `query` | `--text TEXT` | `--store PATH`, `--top-k N`, `--metric [elk\|wasserstein2\|fisher_rao]` | Requires prior `ingest` |
-| `polysemy-query` | `--text TEXT` | `--store PATH`, `--top-k N`, `--metric` | Requires `MISTRAL_API_KEY` |
-| `answer` | `--text TEXT` | `--store PATH`, `--top-k N`, `--metric` | Requires `MISTRAL_API_KEY` and `generation.mode=provider` |
-| `demo-query` | `--text TEXT` | `--top-k N`, `--metric` | No store needed |
-| `evaluate` | _(none)_ | `--benchmark demo`, `--split test`, `--top-k N` | Built-in benchmark only |
-| `ablation` | _(none)_ | _(none)_ | Runs preset ablation matrix |
-| `visualize` | _(none)_ | `--store PATH`, `--output PATH` | Generates 3D interactive HTML |
-
-You can also invoke via the installed script entry point:
+Gaussian RAG includes a real-time 3D dashboard displaying live stage latencies streamed via Server-Sent Events (SSE):
 
 ```bash
-gaussian-rag query --store .gaussian_rag_store --text "my query"
+# Terminal 1: Start FastAPI telemetry server (port 8001)
+python dashboard_server.py
+
+# Terminal 2: Start Vite dashboard frontend (port 5173)
+cd dashboard
+npm install
+npm run dev
 ```
+
+Visit `http://localhost:5173` to explore:
+- Interactive 3D PCA Gaussian ellipsoids with uncertainty axes.
+- Real-time SSE stage telemetry (Clef gating, taxonomy routing, FTS5 lookup, Woodbury ELK).
+- Live Clef decision routing confidence traces.
 
 ---
 
-## 6. Running the Tests
+## 7. Testing & Verification
 
-All tests live in `tests/test_pipeline.py`. Run them from the repo root.
-
-### Run the full test suite
-
-```bash
-uv run pytest
-```
-
-### Run with verbose output
+### 7.1 End-to-End Evaluation on *The 48 Laws of Power*
+Validates complete pipeline execution with exact-match Law 1 retrieval:
 
 ```bash
-uv run pytest -v
+python test_48_laws_e2e.py
 ```
 
-### Run a specific test
-
+### 7.2 Latency Verification (<100ms)
 ```bash
-uv run pytest -v -k "test_ingest_and_query_store_round_trip"
+pytest tests/test_benchmark_latency.py -v
 ```
 
-### Run only fast unit tests (skip CLI subprocess tests)
-
+### 7.3 Facade & Universal Ingestion Tests
 ```bash
-uv run pytest -v -k "not cli"
+pytest tests/test_library_facade.py -v
 ```
 
-### Test categories
-
-| Test | What it checks |
-|---|---|
-| `test_demo_pipeline_retrieves_results` | Demo corpus loads and store is non-empty |
-| `test_phase1_metrics_are_bounded` | nDCG@3 and Recall@3 are in [0,1] and > 0 |
-| `test_phase2_training_score_is_non_negative` | Augmentation consistency loss > 0 (views diverge) |
-| `test_phase3_geometry_score_is_non_negative` | Coverage score > 0 (chunks differ in manifold) |
-| `test_ablation_runner_returns_named_results` | Ablation matrix runs without error |
-| `test_project_config_loads_expected_defaults` | `config.yaml` parses correctly |
-| `test_provider_env_loads_mistral_keys_from_file` | `.env` file parsing works |
-| `test_provider_client_parses_mistral_response` | Mistral HTTP response parsing (mocked) |
-| `test_fisher_rao_metric_populates_distance_field` | FR distances are non-null after retrieval |
-| `test_ingest_and_query_store_round_trip` | Ingest → persist → load → query all succeed |
-| `test_query_requires_persisted_store` | Missing store raises a clear `ValueError` |
-| `test_answer_uses_provider_backed_generator` | `answer` calls `ProviderBackedGenerator` (mocked) |
-| `test_answer_runs_through_provider_client_contract` | `answer` sends HTTP request and parses response (mocked) |
-| `test_answer_requires_provider_mode` | `generation.mode` validation fires correctly |
-| `test_ablation_cli_runs` | CLI `ablation` subprocess produces expected JSON |
-| `test_demo_query_cli_runs` | CLI `demo-query` subprocess returns chunk IDs |
-| `test_ingest_and_query_cli_flow_runs` | Full CLI ingest + query subprocess flow |
-| `test_evaluate_cli_runs` | CLI `evaluate` returns benchmark JSON |
-| `test_answer_cli_uses_env_and_store` | CLI `answer` reads `.env` and store path |
-| `test_sigma_head_predict_returns_valid_diag_and_low_rank` | SigmaHead shapes and positivity |
-| `test_contrastive_w2_loss_pushes_positive_closer_than_margin` | Loss is 0 for distant negatives, > 0 otherwise |
-| `test_covariance_regularization_loss_is_positive_and_scales_with_inputs` | Regularization loss scales monotonically |
-
----
-
-## 7. Preparing Target Text
-
-### Format
-
-- Plain UTF-8 `.txt` files. No special markup required.
-- One topic per file produces cleaner covariance estimates.
-- Shorter, focused chunks (1–3 paragraphs) embed more precisely than long multi-topic files.
-
-### What makes a good document for this system
-
-| Good | Why |
-|---|---|
-| Specific, focused paragraphs | Produces tight $\Sigma$ → high-confidence retrieval |
-| Contested / multi-interpretation content | Produces wide $\Sigma$ → system correctly signals uncertainty |
-| Ambiguous terms (polysemous entities) | Exercises the `polysemy-query` disambiguation path |
-
-### Writing queries
-
-| Good query | Why |
-|---|---|
-| `"ambiguous treatment options for mitral valve regurgitation"` | Includes domain signal + ambiguity marker |
-| `"conflicting evidence on drug interaction and toxicity"` | Triggers uncertainty-aware retrieval |
-| `"What are the outcomes of the Apple trial?"` | Polysemous — will trigger disambiguation pipeline |
-
-Avoid:
-- Single-word queries (no distributional context for covariance)
-- Exact verbatim sentences from documents (cosine degenerates to exact match; Wasserstein advantage disappears)
-
----
-
-## 8. Programmatic Usage
-
-```python
-from gaussian_rag.core.gaussian_embedding import GaussianEmbedder
-from gaussian_rag.creator.ingestion import IngestionPipeline
-from gaussian_rag.core.store import KnowledgeStore
-from gaussian_rag.rag.retrieval.retriever import GaussianRetriever
-
-# Set up
-embedder = GaussianEmbedder()
-pipeline = IngestionPipeline(embedder)
-store = KnowledgeStore()
-
-# Ingest text
-chunks = pipeline.ingest_document(
-    "The mitral valve regulates blood flow. Treatment is context-dependent.",
-    document_id="doc-1",
-)
-store.add(chunks)
-
-retriever = GaussianRetriever(store)
-retriever.refresh()
-
-# Query
-query = embedder.encode_query("What controls blood flow in the heart?", with_covariance=True)
-results = retriever.retrieve(query, top_k=3, metric="elk")
-
-for r in results:
-    print(r.rank, r.uncertainty_label, r.elk_score, r.knowledge.text[:60])
+### 7.4 Corpus Generator & Normalizer Tests
+```bash
+pytest tests/test_corpus_generator.py -v
 ```
 
-### With disambiguation
+### 7.5 Dual-Store Synchronization Tests
+```bash
+pytest tests/test_dual_store_sync.py -v
+```
 
-```python
-from gaussian_rag.rag.sense_cache import SenseCache
-from gaussian_rag.rag.disambiguation.pipeline import disambiguate
-from gaussian_rag.rag.disambiguation.router import route
-
-cache = SenseCache()
-
-# llm_caller must return raw JSON string matching the SenseGenerator schema
-def my_llm(prompt: str) -> str:
-    # wire to Mistral, OpenAI, or any LLM
-    ...
-
-packet = disambiguate("Apple trial outcomes", embedder, cache, llm_caller=my_llm)
-print(f"Entropy: {packet.entropy:.2f} bits — Selected: {packet.selected_sense_id}")
-
-sense_results, fallback = route(packet, embedder, retriever, top_k=3)
+### 7.6 Run Full Test Suite
+```bash
+pytest
 ```

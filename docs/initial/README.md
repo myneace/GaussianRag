@@ -1,151 +1,97 @@
-# GaussianRAG — Probabilistic Retrieval-Augmented Generation on Information Manifolds
+# Gaussian-Clef RAG — Probabilistic Retrieval-Augmented Generation on Information Manifolds
 
-> *Treating knowledge not as points, but as distributions.*
+> *Treating knowledge not as points, but as distributions on statistical manifolds — accelerated to sub-100ms production response times.*
 
 ---
 
 ## What Is This?
 
-Standard RAG systems embed knowledge chunks as **single points** in vector space and retrieve them using cosine similarity. This discards a fundamental property of knowledge: **uncertainty**.
+Standard RAG systems embed knowledge chunks as **single points** in flat vector spaces and retrieve them using cosine similarity. This discards a fundamental property of knowledge: **uncertainty**.
 
-GaussianRAG represents every knowledge chunk as a **Gaussian distribution** $\mathcal{N}(\mu, \Sigma)$ in an information manifold, where:
+Gaussian-Clef RAG represents every knowledge chunk as a **multivariate Gaussian distribution** $\mathcal{N}(\mu, \Sigma)$ in an information manifold:
 
-- $\mu$ encodes the **central semantic meaning**
-- $\Sigma$ encodes **directional uncertainty** — how ambiguous, multi-faceted, or contested the knowledge is
+- $\mu \in \mathbb{R}^d$ encodes the **central semantic meaning**.
+- $\Sigma \in \text{SPD}(d)$ encodes **directional uncertainty** — representing ambiguity, multi-faceted aspects, and semantic spread ($\Sigma = \text{diag}(v) + LL^T$).
 
-Retrieval then happens not by cosine similarity, but by **distributional overlap on the statistical manifold** using the Expected Likelihood Kernel (ELK), with Wasserstein-2 and Fisher-Rao retained as alternate geometric analysis modes.
+Retrieval operates through **Expected Likelihood Kernel (ELK)** overlap on the statistical manifold, accelerated via low-rank Woodbury inversion and non-autoregressive Cloudflare Clef decision routing.
 
 ---
 
 ## Core Thesis
 
-> Standard RAG treats knowledge as points. We treat it as distributions on an information manifold. This recovers directional semantic uncertainty, enables geometry-aware retrieval, and produces measurably better results on ambiguous queries — the exact queries where RAG currently fails most.
+> Standard RAG treats knowledge as points. We treat it as distributions on an information manifold. By combining Woodbury matrix acceleration, embedded SQLite FTS5 lexical pre-filtering, and non-autoregressive Clef decision gates, Gaussian RAG achieves sub-100ms end-to-end response times while preserving statistical manifold geometry.
 
 ---
 
 ## Documentation Index
 
-### Root Documentation
+### Primary Guides
 
 | File | Description |
 |---|---|
-| [README.md](./README.md) | This file — project overview |
-| [USAGE.md](./USAGE.md) | **How to run** — install, add documents, run pipeline, run tests |
-| [RESEARCH_QUESTIONS.md](./RESEARCH_QUESTIONS.md) | The 20 backbone research questions |
-| [THEORY.md](./THEORY.md) | Mathematical foundations and information geometry |
-| [PIPELINE.md](./PIPELINE.md) | Full system pipeline — end to end |
-| [CODEBASE.md](./CODEBASE.md) | Project structure and module descriptions |
-| [EXPERIMENTS.md](./EXPERIMENTS.md) | What we are testing, benchmarks, evaluation protocol |
-| [DECISIONS.md](./DECISIONS.md) | Key design decisions and rationale |
+| [USAGE.md](./USAGE.md) | **Developer & Usage Guide** — Standalone library facade, CLI commands, data generator, and dashboard |
+| [CODEBASE.md](./CODEBASE.md) | **Codebase Architecture** — Module structure, dependencies, and component responsibilities |
+| [PIPELINE.md](./PIPELINE.md) | **Pipeline Specification** — 6-stage sub-100ms retrieval and dual-store universal ingestion |
+| [DECISIONS.md](./DECISIONS.md) | **Design Decisions** — Architectural decision records (DD-01 through DD-15) |
+| [THEORY.md](./THEORY.md) | **Mathematical Foundations** — Information geometry, SPD manifolds, and Woodbury ELK derivation |
+| [EXPERIMENTS.md](./EXPERIMENTS.md) | **Experiments & Benchmarks** — Latency tests, *48 Laws of Power* exact-match verification, ablation |
+| [RESEARCH_QUESTIONS.md](./RESEARCH_QUESTIONS.md) | **Research Questions** — 20 backbone theoretical and empirical questions |
+| [../ABOUT.md](../ABOUT.md) | **PyTorch SigmaHead** — Learned covariance estimation and continual online radiation learning |
 
 ### Concept Specifications (`docs/concepts/`)
 
 | File | Description |
 |---|---|
 | [docs/concepts/README.md](../concepts/README.md) | Index of all concept documents |
-| [polysemy_rag_spec.md](../concepts/polysemy_rag_spec.md) | Production spec: polysemy-resilient parallel multi-agent RAG |
-| [polysemy_rag_gap_analysis.md](../concepts/polysemy_rag_gap_analysis.md) | Historical gap-analysis snapshot for the spec's early implementation phase |
-| [gaussian_knowledge_graph.md](../concepts/gaussian_knowledge_graph.md) | GSKG: nodes as Gaussian distributions on a manifold |
-| [agents_implementation.md](../concepts/agents_implementation.md) | Original agent brainstorm (superseded by polysemy\_rag\_spec) |
+| [polysemy_rag_spec.md](../concepts/polysemy_rag_spec.md) | Production specification for polysemy-resilient multi-agent RAG |
+| [agent_dissolver.md](../concepts/agent_dissolver.md) | Semantic ingestion engine and manifold filament generation |
+| [multi_agent_disambiguation.md](../concepts/multi_agent_disambiguation.md) | Parallel semantic inference and routing pipeline |
+| [gaussian_knowledge_graph.md](../concepts/gaussian_knowledge_graph.md) | Gaussian Semantic Knowledge Graphs (GSKG) concept notes |
 
 ---
 
-## Quick Summary of the Approach
+## Quick Summary of the 6-Stage Retrieval Engine
 
 ```
-Document → Chunk → Encode as N(μ, Σ) → Store on Manifold
-                                                  ↓
-Query → Encode as N(μ_q, Σ_q) → Retrieve via ELK overlap
-                                                  ↓
-         Weight by confidence → Augment LLM context → Generate
+User Query
+    │
+    ▼
+[S1] Clef Ambiguity Gate ────── Fast non-autoregressive noul/choice gate (<40ms)
+    │
+    ▼
+[S2] Taxonomy Routing ───────── Prunes 60-80% candidate branches in hierarchical tree
+    │
+    ▼
+[S3] Hybrid Dual-Filter ─────── SQLite FTS5 BM25 + μ-ANN lockstep selection (<2ms)
+    │
+    ▼
+[S4] Clef Passage Gate ──────── Parallel 4-question contradiction/relevance filter
+    │
+    ▼
+[S5] Woodbury ELK Rerank ────── O(d * r^2) exact Gaussian overlap calculation (<3ms)
+    │
+    ▼
+[S6] Provider Generation ────── Calibrated answer synthesis with uncertainty indicators
 ```
 
 ---
 
-## Why This Matters
+## Quick Start (Python Facade)
 
-Current RAG failures cluster around:
-- **Ambiguous queries** — flat retrieval doesn't know what the query *could* mean
-- **Contested knowledge** — conflicting chunks are treated equally
-- **Vague documents** — long, multi-faceted chunks are poorly represented as a single point
+```python
+from gaussian_rag import GaussianRAG
 
-Gaussian distributions directly address all three.
+# Create local instance with zero cloud dependencies required
+rag = GaussianRAG.create()
 
----
+# Ingest texts or raw messy text
+rag.add_texts([
+    "Never outshine the master. Make those above you feel comfortably superior.",
+    "Conceal your intentions. Keep people off-balance and in the dark.",
+])
 
-## Target Domains
-
-The gains are largest in domains with inherent uncertainty:
-
-- **Medical** — differential diagnoses, guideline conflicts
-- **Legal** — precedent ambiguity, jurisdictional variance
-- **Scientific** — hypothesis vs. established fact
-- **Finance** — forecast distributions, risk scenarios
-
----
-
-## Status
-
-> 🔬 Research prototype — pre-publication
-
-## Prototype Scope in This Repository
-
-The repository contains an executable prototype in `gaussian_rag/`.
-
-- **Phase 0** adds a fully-implemented `gaussian_rag/rag/disambiguation/` module: a 5-agent LLM-driven polysemy resolution pipeline (Agent 0 plus Agents 1–4) that routes ambiguous queries to single-sense, dual-sense, or clarification fallback retrieval paths. The `gaussian_rag/rag/sense_cache.py` module provides session-scoped `SenseNode` storage with TTL.
-- **Phase 1** is implemented as a runnable Gaussian retrieval system with a config-selected embedding backend over ingested local corpora, with ELK overlap as the default live ranker and W2/FR retained as alternate metrics.
-- **Phase 2** includes the implemented PyTorch `SigmaHead`, training loop, and online radiation refinement path, while still remaining prototype-shaped rather than benchmark-hardened production infrastructure.
-- **Phase 3** includes Fisher-Rao scoring, manifold helpers, and coverage/drift proxies rather than full FR indexing infrastructure.
-- **Phase 4** supports env-backed provider generation for real answer calls, while keeping demo-only commands explicit.
-- **Phase 5** includes experiment runners, tests, config, and notebook scaffolding for the research workflow.
-
-This means the code is executable and phase-shaped, but retrieval is still a prototype local-store flow rather than a benchmark-validated production stack.
-
-## Running the Prototype
-
-### 1. Configure env-backed provider access
-
-```bash
-uv sync
-cp .env.example .env
-```
-
-Fill `.env` with real local values before using `answer`. The current supported provider-backed answer path is Mistral only.
-
-### 2. Persisted local corpus flow
-
-```bash
-uv run python -m gaussian_rag.main ingest --input my_docs --output .gaussian_rag_store
-uv run python -m gaussian_rag.main query --store .gaussian_rag_store --text "ambiguity in legal precedent" --top-k 3
-uv run python -m gaussian_rag.main answer --store .gaussian_rag_store --text "Summarize the ambiguity in legal precedent" --top-k 3
-```
-
-`query --store ...` searches the persisted local store written by `ingest`. `answer --store ...` uses that retrieved context plus the env-backed provider configuration to generate a real model response.
-
-### 3. Built-in demo-only flow
-
-```bash
-uv run python -m gaussian_rag.main demo-query --text "ambiguous treatment guidance" --top-k 3
-uv run python -m gaussian_rag.main evaluate --benchmark demo --split test
-uv run python -m gaussian_rag.main ablation
-```
-
-Run the commands from the repository root so `config/config.yaml` is discovered correctly.
-
-The `ingest` command accepts a `.txt` file or a directory of `.txt` files, writes a persistent prototype store, and `query --store ...` can search that ingested corpus.
-
-The production-oriented commands are `ingest`, `query`, and `answer`. They operate on the persisted local store path from `--store` or the default `.gaussian_rag_store` path.
-
-`demo-query`, `evaluate`, and `ablation` are demo-only: they use the built-in demo benchmark and demo corpus rather than the ingested local store.
-
-Default query behavior constructs a query Gaussian for ELK and Fisher-Rao paths so the live retrieval rule matches the paper's query-bubble formulation.
-
-The `answer` command is intentionally strict: it requires `generation.mode=provider`, `generation.provider=mistral`, and valid `MISTRAL_*` settings in `.env` or the environment. It does not silently fall back to template output.
-
-### Visualize Knowledge Field
-
-Generate a 3D interactive topological map of the knowledge field based on ingested semantic means and uncertainty covariance:
-
-```bash
-uv run python -m gaussian_rag.main visualize --store .gaussian_rag_store --output .visualizer
+# Search with sub-100ms Woodbury ELK
+results = rag.search("How to handle superiors?", top_k=3)
+for chunk in results:
+    print(f"[{chunk.rank}] {chunk.knowledge.text} (confidence: {chunk.confidence:.3f})")
 ```
