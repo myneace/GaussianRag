@@ -67,46 +67,6 @@ Gaussian-Clef RAG transforms probabilistic retrieval from a multi-second researc
 
 ![Manifold Pipeline Architecture](dashboard/public/pipeline_diagram.png)
 
-```
-                                  USER QUERY
-                                      │
-                                      ▼
-                        ┌───────────────────────────┐
-                        │ [S1] Clef Ambiguity Gate  │ ── (Unambiguous: bypass multi-sense)
-                        │ Non-autoregressive (noul) │
-                        └─────────────┬─────────────┘
-                                      │
-                                      ▼
-                        ┌───────────────────────────┐
-                        │ [S2] Taxonomy Routing     │ ── (Prunes 60-80% candidate branches)
-                        │ Hierarchical branch tree  │
-                        └─────────────┬─────────────┘
-                                      │
-                                      ▼
-                        ┌───────────────────────────┐
-                        │ [S3] Hybrid Dual-Filter   │
-                        │ SQLite FTS5 BM25 + ANN    │ ── (Sub-2ms lockstep candidate selection)
-                        └─────────────┬─────────────┘
-                                      │  (30 candidates)
-                                      ▼
-                        ┌───────────────────────────┐
-                        │ [S4] Clef Passage Gate    │ ── (Filters noise, contradictions, gaps)
-                        │ 4-question decision gate  │
-                        └─────────────┬─────────────┘
-                                      │  (Top 5-8 survivors)
-                                      ▼
-                        ┌───────────────────────────┐
-                        │ [S5] Woodbury ELK Rerank  │ ── (<3ms exact manifold overlap scoring)
-                        │ 𝒩(μ_q; μ_d, Σ_q + Σ_d)   │
-                        └─────────────┬─────────────┘
-                                      │
-                                      ▼
-                        ┌───────────────────────────┐
-                        │ [S6] Provider Generation  │ ── (Optional: Mistral, Gemini, OpenAI)
-                        │ Grounded answer synthesis │
-                        └───────────────────────────┘
-```
-
 ---
 
 ## 🧹 Flexible Corpus Generator & Raw Text Normalization
