@@ -65,6 +65,8 @@ Gaussian-Clef RAG transforms probabilistic retrieval from a multi-second researc
 
 ## 📐 End-to-End Pipeline Architecture
 
+![Manifold Pipeline Architecture](dashboard/public/pipeline_diagram.png)
+
 ```
                                   USER QUERY
                                       │
