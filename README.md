@@ -7,7 +7,7 @@
 > Every chunk of knowledge is a Gaussian distribution, not a flat vector. Retrieval is information geometry, accelerated to production speed.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL%203.0-blue.svg)](LICENSE)
 [![Type Checked](https://img.shields.io/badge/type%20checked-pyright-green.svg)](pyproject.toml)
 [![Tests](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](tests/)
 
@@ -365,5 +365,5 @@ For in-depth guides and architectural blueprints, explore the [`docs/`](docs/) d
 ---
 
 ## 📜 License
-
-Apache-2.0 License. See [LICENSE](LICENSE) for details.
+ 
+GNU Affero General Public License v3.0 (AGPL-3.0). See [LICENSE](LICENSE) for details.

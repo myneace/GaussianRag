@@ -3,14 +3,14 @@ name = "gaussian-rag"
 version = "0.1.0"
 description = "Probabilistic retrieval-augmented generation on statistical information manifolds"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = { text = "AGPL-3.0" }
 keywords = ["rag", "retrieval", "gaussian", "manifold", "nlp", "llm", "information-geometry"]
 authors = [{ name = "Manifold Project" }]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
-  "License :: OSI Approved :: Apache Software License",
+  "License :: OSI Approved :: GNU Affero General Public License v3 (AGPLv3)",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
