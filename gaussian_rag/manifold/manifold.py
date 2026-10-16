@@ -20,7 +20,11 @@ def matrix_inv_sqrt(matrix: np.ndarray, floor: float = 1e-6) -> np.ndarray:
     return (vectors * (1.0 / np.sqrt(values))) @ vectors.T
 
 
+
 def geodesic_interpolate(start: np.ndarray, end: np.ndarray, t: float) -> np.ndarray:
+    # DEPRECATED: unused — retained for historical reference only.
+    # This function is no longer exported from the package __init__.py.
+    # Use the Woodbury ELK reranker for manifold-based similarity computations.
     start_sqrt = matrix_sqrt(start)
     start_inv_sqrt = matrix_inv_sqrt(start)
     transport = start_inv_sqrt @ end @ start_inv_sqrt

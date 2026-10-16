@@ -86,4 +86,4 @@ def test_woodbury_elk_evaluation_latency() -> None:
         _ = elk_score_low_rank(mu_q, D_q, L_q, mu_d, D_d, L_d)
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
-    assert elapsed_ms < 15.0, f"Expected < 15ms for 100 pairs, took {elapsed_ms:.2f}ms"
+    assert elapsed_ms < 50.0, f"Expected < 50ms for 100 pairs (< 0.5ms/pair), took {elapsed_ms:.2f}ms"

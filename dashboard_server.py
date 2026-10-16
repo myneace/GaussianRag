@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from gaussian_rag.config import load_project_config, load_provider_env, load_runtime_env
 from gaussian_rag.core.gaussian_embedding import GaussianEmbedder
-from gaussian_rag.creator.ingestion import IngestionPipeline
+from gaussian_rag.creator.universal_ingestor import UniversalIngestor
 from gaussian_rag.core.store import KnowledgeStore
 from gaussian_rag.rag.retrieval.retriever import GaussianRetriever
 from gaussian_rag.rag.disambiguation.pipeline import disambiguate
@@ -159,33 +159,13 @@ def _build_embedder(on_event: Optional[Any] = None) -> GaussianEmbedder:
     )
 
 
-def _get_pipeline(on_event: Optional[Any] = None):
-    encoder_config = config["encoder"]
-    embedder = GaussianEmbedder(
-        dimension=encoder_config["dimension"],
-        sigma_mode=encoder_config["sigma_mode"],
-        rank=encoder_config["low_rank"],
-        embedding_backend=encoder_config.get("embedding_backend", "local"),
-        on_mismatch=encoder_config.get("on_mismatch", "error"),
-        on_event=on_event,
-    )
+def _build_ingestor(store: KnowledgeStore) -> UniversalIngestor:
+    """Build a UniversalIngestor backed by the provided KnowledgeStore.
 
-    llm_caller = None
-    try:
-        provider_env = load_provider_env()
-        client = MistralChatClient(provider_env)
-        llm_caller = client.generate
-    except Exception:
-        pass
-
-    pipeline = IngestionPipeline(
-        embedder,
-        llm_caller=llm_caller,
-        extract_entities=True,
-        ai_chunking=(llm_caller is not None),
-        on_event=on_event,
-    )
-    return pipeline
+    UniversalIngestor provides format-agnostic ingestion and lockstep dual-store
+    indexing (dense KnowledgeStore + SQLite FTS5 LexicalStore).
+    """
+    return UniversalIngestor(_build_embedder(), store)
 
 
 @app.get("/api/nodes")
@@ -390,13 +370,11 @@ async def ingest_document(file: UploadFile = File(...)):
             event_queue.put_nowait, {"type": event_type, "data": data}
         )
 
-    pipeline = _get_pipeline(on_event=sync_on_event)
+    ingestor = _build_ingestor(new_store)
 
-    # Run ingestion
-    new_store = KnowledgeStore()
-
-    def run_ingestion():
-        return pipeline.ingest_document(text, document_id=doc_slug)
+    # Run ingestion — UniversalIngestor populates both KnowledgeStore and LexicalStore
+    def run_ingestion() -> list:
+        return ingestor.ingest_texts([text], document_id_prefix=doc_slug)
 
     new_nodes = await asyncio.to_thread(run_ingestion)
 
@@ -460,7 +438,8 @@ async def query_graph(req: QueryRequest):
         def llm_caller(prompt: str) -> str:
             return client.generate(prompt)
 
-        # 2. Disambiguation Step
+        # 2. Disambiguation Step — synchronous legacy path (compatible with no Clef key).
+        # For <40ms Clef-gated fast path, configure ClefClient and use disambiguate_fast().
         emit("query_disambiguation_started", {"text": req.text})
         packet = disambiguate(
             req.text,

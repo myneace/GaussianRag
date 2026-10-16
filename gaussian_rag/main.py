@@ -15,7 +15,8 @@ from gaussian_rag.rag.generation.generator import (
     ProviderBackedGenerator,
     SimpleGenerator,
 )
-from gaussian_rag.creator.ingestion import IngestionPipeline
+from gaussian_rag.creator.ingestion import IngestionPipeline  # kept for demo fixture
+from gaussian_rag.creator.universal_ingestor import UniversalIngestor
 from gaussian_rag.core.store import KnowledgeStore
 from gaussian_rag.rag.retrieval.retriever import GaussianRetriever
 from gaussian_rag.rag.sense_cache import SenseCache
@@ -217,10 +218,6 @@ def _run_answer(
     )
     retrieved = retriever.retrieve(query_representation, top_k=top_k, metric=metric)
     generation_config = load_project_config()["generation"]
-    if generation_config["provider"] != "mistral":
-        raise ValueError(
-            "The current answer path supports only generation.provider=mistral."
-        )
     if generation_config["mode"] != "provider":
         raise ValueError(
             "The answer command requires generation.mode=provider for real provider-backed generation."
@@ -297,40 +294,20 @@ def _run_polysemy_query(
 
 
 def _run_ingest(input_path: str, output_path: str) -> dict[str, object]:
+    """Ingest documents into dual-store (KnowledgeStore + SQLite FTS5 LexicalStore).
+
+    Uses UniversalIngestor for lockstep dual-store indexing, replacing the legacy
+    IngestionPipeline which only populated the dense KnowledgeStore.
+    """
     embedder = _build_embedder()
-
-    llm_caller = None
-    try:
-        provider_env = load_provider_env()
-    except ValueError:
-        provider_env = None
-
-    if provider_env is not None:
-        client = MistralChatClient(provider_env)
-
-        def llm_caller_func(prompt: str) -> str:
-            return client.generate(prompt)
-
-        llm_caller = llm_caller_func
-
-    pipeline = IngestionPipeline(
-        embedder,
-        llm_caller=llm_caller,
-        extract_entities=True,
-        ai_chunking=(llm_caller is not None),
-    )
     store = KnowledgeStore()
+    ingestor = UniversalIngestor(embedder, store)
+
     source = Path(input_path)
     files = [source] if source.is_file() else sorted(source.glob("**/*.txt"))
-    for index, file_path in enumerate(files):
-        text = file_path.read_text(encoding="utf-8")
-        store.add(
-            pipeline.ingest_document(
-                text,
-                document_id=file_path.stem or f"doc-{index}",
-                metadata={"source_path": str(file_path)},
-            )
-        )
+    for file_path in files:
+        ingestor.ingest_file(file_path)
+
     store.save(output_path)
     from gaussian_rag.rag.retrieval.taxonomy_router import TaxonomyRouter
 

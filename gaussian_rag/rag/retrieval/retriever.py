@@ -5,9 +5,13 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from typing import Any
 
-from gaussian_rag.core.types import QueryRepresentation, RetrievedChunk
+import numpy as np
+
+from gaussian_rag.core.types import GaussianKnowledge, QueryRepresentation, RetrievedChunk
 from gaussian_rag.core.store import KnowledgeStore
+from gaussian_rag.core.lexical_store import extract_query_keywords
 from gaussian_rag.rag.retrieval.ann_index import MuAnnIndex
 from gaussian_rag.rag.retrieval.diversity import diversity_filter
 from gaussian_rag.rag.retrieval.manifold_ranker import (
@@ -28,6 +32,56 @@ class GaussianRetriever:
     def refresh(self) -> None:
         self.ann_index.build(self.store.values())
 
+    def get_hybrid_candidates(
+        self,
+        mu: np.ndarray,
+        query_text: str | None = None,
+        top_k: int = 30,
+        allowed_ids: set[str] | None = None,
+        lexical_top_k: int = 15,
+    ) -> list[GaussianKnowledge]:
+        """Retrieve hybrid candidates combining dense ANN search and SQLite FTS5 lexical BM25.
+
+        Ensures that high-information keywords / entities (e.g., proper nouns) are never
+        pruned out of the candidate pool by pure dense vector similarity or arbitrary slices.
+        """
+        ann_ids = self.ann_index.search(mu, top_k=top_k, allowed_ids=allowed_ids)
+
+        lexical_ids: list[str] = []
+        if query_text and self.store.lexical is not None:
+            kw = extract_query_keywords(query_text)
+            if kw and kw != '""':
+                lex_hits = self.store.search_lexical(kw, top_k=lexical_top_k)
+                for cid, _rank in lex_hits:
+                    if allowed_ids is None or cid in allowed_ids:
+                        lexical_ids.append(cid)
+
+        # Merge candidates: prioritize lexical hits, then dense ANN hits
+        combined_ids: list[str] = []
+        seen: set[str] = set()
+
+        for cid in lexical_ids:
+            if cid not in seen:
+                seen.add(cid)
+                combined_ids.append(cid)
+
+        for cid in ann_ids:
+            if cid not in seen:
+                seen.add(cid)
+                combined_ids.append(cid)
+
+        # If allowed_ids is present and combined_ids is smaller than pool size,
+        # fill deterministically with remaining allowed_ids
+        if allowed_ids and len(combined_ids) < min(top_k, len(allowed_ids)):
+            for cid in sorted(allowed_ids):
+                if cid not in seen:
+                    seen.add(cid)
+                    combined_ids.append(cid)
+                    if len(combined_ids) >= top_k:
+                        break
+
+        return self.store.get(combined_ids[:top_k])
+
     def retrieve(
         self,
         query: QueryRepresentation,
@@ -36,16 +90,19 @@ class GaussianRetriever:
         adaptive: bool = True,
         buffer_size: int = 2,
         allowed_ids: set[str] | None = None,
+        query_text: str | None = None,
     ) -> list[RetrievedChunk]:
         if allowed_ids is None and self.taxonomy is not None:
             routed_allowed, _ = self.taxonomy.route_query(query.mu)
             allowed_ids = routed_allowed
 
         fetch_k = None if adaptive else max(top_k * 5, 10)
-        candidate_ids = self.ann_index.search(
-            query.mu, top_k=fetch_k, allowed_ids=allowed_ids
+        candidates = self.get_hybrid_candidates(
+            mu=query.mu,
+            query_text=query_text,
+            top_k=fetch_k or max(top_k * 5, 30),
+            allowed_ids=allowed_ids,
         )
-        candidates = self.store.get(candidate_ids)
         ranked = rerank_candidates(query, candidates, metric=metric)
 
         if adaptive and len(ranked) >= 2:
@@ -90,6 +147,7 @@ class GaussianRetriever:
             adaptive=adaptive,
             buffer_size=buffer_size,
             allowed_ids=allowed_ids,
+            query_text=query_text,
         )
         return ranked, routing_info
 
@@ -115,17 +173,20 @@ class GaussianRetriever:
                 adaptive=adaptive,
                 buffer_size=buffer_size,
                 allowed_ids=allowed_ids,
+                query_text=query_text,
             )
 
         if allowed_ids is None and self.taxonomy is not None:
             routed_allowed, _ = self.taxonomy.route_query(query.mu)
             allowed_ids = routed_allowed
 
-        # 1. Fetch initial candidate pool
-        candidate_ids = self.ann_index.search(
-            query.mu, top_k=gate_candidate_pool_size, allowed_ids=allowed_ids
+        # 1. Fetch initial candidate pool via hybrid lexical-vector selection
+        candidates = self.get_hybrid_candidates(
+            mu=query.mu,
+            query_text=query_text,
+            top_k=gate_candidate_pool_size,
+            allowed_ids=allowed_ids,
         )
-        candidates = self.store.get(candidate_ids)
 
         # 2. Gate candidates through ClefPassageGate
         gated_results = await gate.evaluate_candidates_batch(

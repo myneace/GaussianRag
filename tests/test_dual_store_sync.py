@@ -131,3 +131,77 @@ def test_ingestion_pipeline_dual_store_lockstep(tmp_path: Path) -> None:
         assert candidate_id in geometric_ids, (
             f"Lexical result ID '{candidate_id}' not found in KnowledgeStore"
         )
+
+
+def test_fts5_boolean_sanitization_and_keyword_extraction() -> None:
+    """RET-01 & RET-02: Verify Boolean-aware FTS5 sanitization and keyword extraction."""
+    from gaussian_rag.core.lexical_store import sanitize_fts5_query, extract_query_keywords
+
+    # RET-01: Boolean preservation and operator cleanup
+    assert sanitize_fts5_query("Nicolas OR Fouquet") == '"Nicolas" OR "Fouquet"'
+    assert sanitize_fts5_query("Nicolas AND Fouquet") == '"Nicolas" AND "Fouquet"'
+    assert sanitize_fts5_query("Nicolas NOT Fouquet") == '"Nicolas" NOT "Fouquet"'
+    assert sanitize_fts5_query("OR Nicolas OR Fouquet OR") == '"Nicolas" OR "Fouquet"'
+    assert sanitize_fts5_query("Nicolas OR OR Fouquet") == '"Nicolas" OR "Fouquet"'
+    assert sanitize_fts5_query("") == '""'
+    assert sanitize_fts5_query("   ") == '""'
+
+    # RET-02: Conversational query keyword extraction
+    query = "How should I manage my behavior around insecure bosses, and what was the mistake of Nicolas Fouquet?"
+    extracted = extract_query_keywords(query)
+    assert "OR" in extracted
+    # Entities must be prioritized
+    assert "Nicolas" in extracted
+    assert "Fouquet" in extracted
+    # Stopwords must be filtered out
+    assert "should" not in extracted
+    assert "manage" not in extracted
+    assert "how" not in extracted
+
+    # FTS5 execution with sanitized keyword query
+    sanitized = sanitize_fts5_query(extracted)
+    assert '"Nicolas"' in sanitized
+    assert '"Fouquet"' in sanitized
+    assert "OR" in sanitized
+
+
+def test_gaussian_retriever_hybrid_candidate_selection(tmp_path: Path) -> None:
+    """RET-03: GaussianRetriever natively prioritizes lexical hits in hybrid candidate pool."""
+    from gaussian_rag.rag.retrieval.retriever import GaussianRetriever
+
+    store_dir = tmp_path / "hybrid_test_store"
+    store = KnowledgeStore()
+
+    chunks = [
+        GaussianKnowledge(
+            id="chunk_fouquet",
+            text="Nicolas Fouquet was the superintendent of finances who outshone King Louis XIV.",
+            mu=np.ones(16),
+            sigma_diag=np.ones(16) * 0.1,
+            sigma_L=np.zeros((16, 2)),
+            metadata={"document_id": "law_01"},
+        ),
+        GaussianKnowledge(
+            id="chunk_other",
+            text="General advice about daily routines and court etiquette.",
+            mu=np.ones(16) * 2.0,
+            sigma_diag=np.ones(16) * 0.2,
+            sigma_L=np.zeros((16, 2)),
+            metadata={"document_id": "law_99"},
+        ),
+    ]
+    store.add(chunks)
+    store.save(store_dir)
+
+    loaded = KnowledgeStore.load(store_dir)
+    retriever = GaussianRetriever(store=loaded)
+    retriever.refresh()
+
+    candidates = retriever.get_hybrid_candidates(
+        mu=np.zeros(16),
+        query_text="What was the mistake of Nicolas Fouquet?",
+        top_k=5,
+    )
+    assert len(candidates) >= 1
+    # chunk_fouquet must be the top candidate because of lexical entity match
+    assert candidates[0].id == "chunk_fouquet"

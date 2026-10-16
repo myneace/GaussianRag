@@ -84,10 +84,20 @@ def contrastive_w2_loss(
 
 
 def covariance_regularization_loss(
-    sigma_diag: torch.Tensor,
-    sigma_L: torch.Tensor,
+    sigma_diag: torch.Tensor | "np.ndarray",  # type: ignore[name-defined]
+    sigma_L: torch.Tensor | "np.ndarray",  # type: ignore[name-defined]
     lambda1: float = 0.01,
     lambda2: float = 0.001,
 ) -> torch.Tensor:
-    """L1/L2 regularization to prevent covariance from exploding."""
+    """L1/L2 regularization to prevent covariance from exploding.
+
+    Accepts both torch.Tensor and numpy arrays for convenience; numpy inputs
+    are converted to float32 tensors automatically.
+    """
+    import numpy as np  # noqa: PLC0415
+
+    if isinstance(sigma_diag, np.ndarray):
+        sigma_diag = torch.from_numpy(sigma_diag.astype(np.float32))
+    if isinstance(sigma_L, np.ndarray):
+        sigma_L = torch.from_numpy(sigma_L.astype(np.float32))
     return lambda1 * torch.sum(sigma_diag) + lambda2 * torch.sum(sigma_L * sigma_L)

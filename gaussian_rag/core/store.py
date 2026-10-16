@@ -49,6 +49,9 @@ class KnowledgeStore:
             json.dumps(payload, indent=2), encoding="utf-8"
         )
 
+        if self.lexical is not None:
+            self.lexical.close()
+
         # Sync embedded SQLite FTS5 index
         db_path = path / "lexical.db"
         lex = LexicalStore(db_path)
@@ -62,6 +65,12 @@ class KnowledgeStore:
         ]
         lex.add_passages(passages)
         self.lexical = lex
+
+    def close(self) -> None:
+        """Close SQLite lexical store connection if open."""
+        if self.lexical is not None:
+            self.lexical.close()
+            self.lexical = None
 
     @classmethod
     def load(cls, directory: str | Path) -> "KnowledgeStore":

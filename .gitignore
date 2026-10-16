@@ -4,8 +4,12 @@ knowledge.json
 .pytest_cache/
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
+.full_run_store/
 .full_run_store
-.visualizer
-gaussian_rag.egg-info
+.48_laws_store/
+.visualizer/
+*.egg-info/
+gaussian_rag.egg-info/
 data/
+

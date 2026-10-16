@@ -98,15 +98,20 @@ class GaussianEmbedder:
     # "local" (default) or "gemini_cloud"
     embedding_backend: str = "local"
     on_mismatch: str = "error"  # "error", "heuristic", "retrain"
+    model: SentenceTransformerLike | None = None
+    on_event: Any = None
     _heuristic: HeuristicSigmaEstimator = field(init=False, repr=False)
     _learned: LearnedSigmaEstimator = field(init=False, repr=False)
     _dissolver: DissolverSigmaEstimator = field(init=False, repr=False)
     _entity_aware: EntityAwareSigmaEstimator = field(init=False, repr=False)
     _model: SentenceTransformerLike = field(init=False, repr=False)
-    on_event: Any = None
 
     def __post_init__(self) -> None:
-        if self.embedding_backend == "gemini_cloud":
+        if self.model is not None:
+            self._model = self.model
+            object.__setattr__(self, "dimension", self._model.get_embedding_dimension())
+            self._finish_init()
+        elif self.embedding_backend == "gemini_cloud":
             self._init_gemini_model()
         else:
             self._init_local_model()
