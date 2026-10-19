@@ -1,4 +1,4 @@
-"""High-level GaussianRAG facade â€” unified public API for the library.
+"""High-level GaussianRAG facade — unified public API for the library.
 
 This module provides a single entry-point class ``GaussianRAG`` that wires
 together all internal sub-systems:
@@ -18,7 +18,7 @@ Quick-start (3 lines)::
     rag.add_texts(["Never outshine the master.", "Always say less than necessary."])
     results = rag.search("How should I behave around powerful people?")
 
-Works standalone â€” no cloud tokens required.  Activate Cloudflare Clef and
+Works standalone — no cloud tokens required.  Activate Cloudflare Clef and
 LLM generation by passing ``use_clef=True`` and supplying API credentials.
 """
 from __future__ import annotations
@@ -73,6 +73,33 @@ def _get_clef_gate():
     return _CLEF_GATE_CLS
 
 
+class QueryResult(dict):
+    """Result of rag.query() and rag.query_sync().
+
+    Preserves 100% dictionary compatibility while providing convenient
+    property access and string conversion to the generated answer.
+    """
+
+    @property
+    def answer(self) -> str:
+        return str(self.get("answer", ""))
+
+    @property
+    def question(self) -> str:
+        return str(self.get("question", ""))
+
+    @property
+    def retrieved_chunks(self) -> list[RetrievedChunk]:
+        return self.get("retrieved_chunks", [])
+
+    @property
+    def context(self) -> str:
+        return str(self.get("context", ""))
+
+    def __str__(self) -> str:
+        return self.answer or super().__str__()
+
+
 class GaussianRAG:
     """Unified high-level facade for Gaussian RAG.
 
@@ -122,6 +149,7 @@ class GaussianRAG:
         sigma_mode: str = "heuristic",
         chunk_size: int = 128,
         chunk_overlap: int = 16,
+        use_taxonomy: bool = False,
     ) -> "GaussianRAG":
         """Create a new GaussianRAG instance with an empty knowledge store.
 
@@ -156,6 +184,8 @@ class GaussianRAG:
             Token budget per chunk for ingestion.
         chunk_overlap:
             Token overlap between consecutive chunks.
+        use_taxonomy:
+            Enable hierarchical taxonomy router for pruning search spaces.
 
         Returns
         -------
@@ -166,6 +196,9 @@ class GaussianRAG:
 
         store = KnowledgeStore()
         retriever = GaussianRetriever(store=store)
+        if use_taxonomy:
+            retriever.taxonomy = TaxonomyRouter()
+
         ingestor = UniversalIngestor(
             embedder, store, chunk_size=chunk_size, chunk_overlap=chunk_overlap
         )
@@ -193,15 +226,66 @@ class GaussianRAG:
                     "set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN"
                 )
 
-        # Optional generator â€” pass a pre-built generator instance via
-        # rag._generator = <generator> after creation, or configure via
-        # the existing pipeline in gaussian_rag.rag.generation.
+        # Optional generator — pass a pre-built generator instance via
+        # rag.generator = <generator> after creation, or configure via
+        # use_generator=True.
         generator = None
         if use_generator:
-            logger.info(
-                "GaussianRAG: use_generator=True; assign a generator via "
-                "rag._generator after calling GaussianRAG.create()"
+            import os
+            key = (
+                generator_api_key
+                or os.getenv("MISTRAL_API_KEY")
+                or os.getenv("OPENAI_API_KEY")
+                or os.getenv("GEMINI_API_KEY")
             )
+            if key and (generator_base_url or os.getenv("MISTRAL_API_KEY") or os.getenv("OPENAI_API_KEY")):
+                try:
+                    if os.getenv("MISTRAL_API_KEY") or (key and not generator_base_url):
+                        from gaussian_rag.rag.generation.generator import ProviderBackedGenerator
+                        gen_cfg = {
+                            "model_name": generator_model or "mistral-small-latest",
+                            "temperature": 0.2,
+                            "max_tokens": 512,
+                            "timeout_seconds": 45.0,
+                        }
+                        prov_env = {
+                            "api_key": key,
+                            "base_url": generator_base_url or "https://api.mistral.ai/v1",
+                        }
+                        generator = ProviderBackedGenerator(
+                            generation_config=gen_cfg,
+                            provider_env=prov_env,
+                        )
+                    else:
+                        from gaussian_rag.creator.llm_assistant import OpenAICorpusAssistant
+
+                        class _OpenAIGeneratorAdapter:
+                            def __init__(self, assistant):
+                                self.assistant = assistant
+
+                            def generate(self, query: str, chunks: list[RetrievedChunk]) -> dict[str, str]:
+                                ctx = "\n\n".join(f"[{c.rank}] {c.knowledge.text}" for c in chunks)
+                                prompt = f"Context:\n{ctx}\n\nQuestion: {query}\nAnswer based on context:"
+                                ans = self.assistant.complete(prompt)
+                                return {"context": ctx, "answer": ans, "prompt": prompt}
+
+                        assistant = OpenAICorpusAssistant(
+                            api_key=key,
+                            base_url=generator_base_url,
+                            model=generator_model,
+                        )
+                        generator = _OpenAIGeneratorAdapter(assistant)
+                except Exception as exc:
+                    logger.warning(
+                        "GaussianRAG: Failed to initialize provider generator: %s; falling back to SimpleGenerator",
+                        exc,
+                    )
+                    from gaussian_rag.rag.generation.generator import SimpleGenerator
+                    generator = SimpleGenerator()
+            else:
+                from gaussian_rag.rag.generation.generator import SimpleGenerator
+                generator = SimpleGenerator()
+                logger.info("GaussianRAG: Initialized local SimpleGenerator")
 
         return cls(
             embedder=embedder,
@@ -242,6 +326,14 @@ class GaussianRAG:
         # Rebuild ANN index
         rag._retriever.refresh()
         rag._save_dir = path
+
+        # Restore taxonomy if persisted
+        if (path / "taxonomy.json").exists():
+            router = TaxonomyRouter.load(path)
+            if router is not None:
+                rag._retriever.taxonomy = router
+                logger.info("GaussianRAG: restored taxonomy router from '%s'", directory)
+
         logger.info(
             "GaussianRAG: loaded %d items from '%s'",
             len(rag._store.items),
@@ -456,7 +548,7 @@ class GaussianRAG:
         metric: str = "elk",
         with_covariance: bool = False,
     ) -> list[RetrievedChunk]:
-        """Pure local hybrid retrieval â€” no LLM or cloud required.
+        """Pure local hybrid retrieval — no LLM or cloud required.
 
         Uses dense Gaussian ANN search combined with SQLite FTS5 lexical
         BM25 scoring for robust candidate selection, then ranks by the
@@ -471,6 +563,9 @@ class GaussianRAG:
         metric:
             Ranking metric: ``"elk"`` (ELK score), ``"w2"`` (Wasserstein-2),
             or ``"fr"`` (Fisher-Rao).
+        with_covariance:
+            When True, estimates full query uncertainty covariance matrix
+            for directional ELK evaluation. Default False (point query).
 
         Returns
         -------
@@ -488,15 +583,13 @@ class GaussianRAG:
         )
         return results
 
-    async def query(
+    def query_sync(
         self,
         question: str,
         top_k: int = 5,
-    ) -> dict[str, Any]:
-        """End-to-end RAG pipeline: retrieve â†’ (optionally) gate â†’ (optionally) generate.
-
-        Works fully locally when no cloud components are configured.  Activates
-        Cloudflare Clef gating and LLM answer generation when those are set up.
+        with_covariance: bool = False,
+    ) -> QueryResult:
+        """Synchronous execution of rag.query().
 
         Parameters
         ----------
@@ -504,16 +597,73 @@ class GaussianRAG:
             Natural language question.
         top_k:
             Number of passages to retrieve.
+        with_covariance:
+            When True, estimates full query uncertainty covariance matrix
+            for directional ELK evaluation. Default False.
 
         Returns
         -------
-        A dict with keys:
-        - ``"question"`` â€” the original question.
-        - ``"retrieved_chunks"`` â€” list of ``RetrievedChunk`` objects.
-        - ``"context"`` â€” concatenated passage texts used for generation.
-        - ``"answer"`` â€” LLM-generated answer (empty string if no generator).
+        QueryResult containing question, retrieved_chunks, context, and answer.
         """
-        chunks = self.search(question, top_k=top_k)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(
+                    lambda: asyncio.run(self._async_query(question, top_k=top_k, with_covariance=with_covariance))
+                ).result()
+        return asyncio.run(self._async_query(question, top_k=top_k, with_covariance=with_covariance))
+
+    def query(
+        self,
+        question: str,
+        top_k: int = 5,
+        with_covariance: bool = False,
+        sync: bool = False,
+    ) -> Any:
+        """End-to-end RAG pipeline: retrieve → (optionally) gate → (optionally) generate.
+
+        Works fully locally when no cloud components are configured.  Activates
+        Cloudflare Clef gating and LLM answer generation when those are set up.
+
+        Can be awaited asynchronously (default), or executed synchronously with ``sync=True``
+        or via ``rag.query_sync()``.
+
+        Parameters
+        ----------
+        question:
+            Natural language question.
+        top_k:
+            Number of passages to retrieve.
+        with_covariance:
+            When True, estimates full query uncertainty covariance matrix
+            for directional ELK evaluation. Default False.
+        sync:
+            When True, executes synchronously and returns QueryResult directly.
+
+        Returns
+        -------
+        QueryResult (or Coroutine returning QueryResult when sync=False) with keys/properties:
+        - ``"question"`` — the original question.
+        - ``"retrieved_chunks"`` — list of ``RetrievedChunk`` objects.
+        - ``"context"`` — concatenated passage texts used for generation.
+        - ``"answer"`` — LLM-generated answer (empty string if no generator).
+        """
+        if sync:
+            return self.query_sync(question, top_k=top_k, with_covariance=with_covariance)
+        return self._async_query(question, top_k=top_k, with_covariance=with_covariance)
+
+    async def _async_query(
+        self,
+        question: str,
+        top_k: int = 5,
+        with_covariance: bool = False,
+    ) -> QueryResult:
+        chunks = self.search(question, top_k=top_k, with_covariance=with_covariance)
 
         # Optional Clef passage gating
         if self._passage_gate is not None and chunks:
@@ -540,19 +690,21 @@ class GaussianRAG:
             except Exception as exc:
                 logger.warning("GaussianRAG.query: generation error: %s", exc)
 
-        return {
-            "question": question,
-            "retrieved_chunks": chunks,
-            "context": context,
-            "answer": answer,
-        }
+        return QueryResult(
+            {
+                "question": question,
+                "retrieved_chunks": chunks,
+                "context": context,
+                "answer": answer,
+            }
+        )
 
     # ------------------------------------------------------------------
     # Persistence API
     # ------------------------------------------------------------------
 
     def save(self, directory: str | Path | None = None) -> Path:
-        """Persist the knowledge store (dense + lexical) to disk.
+        """Persist the knowledge store (dense + lexical + taxonomy) to disk.
 
         Parameters
         ----------
@@ -609,6 +761,15 @@ class GaussianRAG:
     def taxonomy(self) -> TaxonomyRouter | None:
         """The underlying hierarchical taxonomy router, if built or configured."""
         return self._retriever.taxonomy
+
+    @property
+    def generator(self) -> Any | None:
+        """The underlying answer generator, if configured."""
+        return self._generator
+
+    @generator.setter
+    def generator(self, value: Any | None) -> None:
+        self._generator = value
 
     def close(self) -> None:
         """Close open resources (e.g. SQLite lexical database)."""

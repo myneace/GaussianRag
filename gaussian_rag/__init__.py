@@ -69,8 +69,7 @@ from gaussian_rag.creator.corpus_generator import CorpusGenerator, CorpusDocumen
 from gaussian_rag.creator.corpus_cache import CorpusCache
 from gaussian_rag.creator.llm_assistant import OpenAICorpusAssistant
 
-# ── High-level facade ─────────────────────────────────────────────────────────
-from gaussian_rag.rag.facade import GaussianRAG
+from gaussian_rag.rag.facade import GaussianRAG, QueryResult
 
 # ── Optional cloud (imported lazily — don't fail if httpx not configured) ─────
 def _lazy_clef():
@@ -82,6 +81,7 @@ def _lazy_clef():
 __all__ = [
     # Facade
     "GaussianRAG",
+    "QueryResult",
     # Ingestion & Corpus Generation
     "UniversalIngestor",
     "TextNormalizer",
