@@ -352,7 +352,14 @@ async def ingest_document(file: UploadFile = File(...)):
     global active_session, store
 
     content = await file.read()
-    text = content.decode("utf-8")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        try:
+            text = content.decode("latin-1")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to decode uploaded file: {e}")
+
     original_filename = file.filename or "uploaded_doc"
     doc_slug = _slugify(Path(original_filename).stem)
 
@@ -370,6 +377,7 @@ async def ingest_document(file: UploadFile = File(...)):
             event_queue.put_nowait, {"type": event_type, "data": data}
         )
 
+    new_store = KnowledgeStore()
     ingestor = _build_ingestor(new_store)
 
     # Run ingestion — UniversalIngestor populates both KnowledgeStore and LexicalStore
