@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -13,11 +13,20 @@ from gaussian_rag.core.lexical_store import LexicalStore
 @dataclass(slots=True)
 class KnowledgeStore:
     items: dict[str, GaussianKnowledge] = field(default_factory=dict)
-    lexical: LexicalStore | None = field(default=None)
+    lexical: LexicalStore | None = field(default_factory=lambda: LexicalStore(":memory:"))
 
     def add(self, chunks: list[GaussianKnowledge]) -> None:
+        passages = []
         for chunk in chunks:
             self.items[chunk.id] = chunk
+            doc_id = (
+                str(chunk.metadata.get("document_id", chunk.metadata.get("source_path", "default")))
+                if chunk.metadata
+                else "default"
+            )
+            passages.append((chunk.id, doc_id, chunk.text))
+        if self.lexical is not None and passages:
+            self.lexical.add_passages(passages)
 
     def get(self, ids: list[str]) -> list[GaussianKnowledge]:
         return [self.items[item_id] for item_id in ids if item_id in self.items]
@@ -25,10 +34,11 @@ class KnowledgeStore:
     def values(self) -> list[GaussianKnowledge]:
         return list(self.items.values())
 
-    def search_lexical(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        if self.lexical is not None:
-            return self.lexical.search(query, top_k=top_k)
-        return []
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __iter__(self):
+        return iter(self.items.values())
 
     def save(self, directory: str | Path) -> None:
         path = Path(directory)
@@ -66,31 +76,48 @@ class KnowledgeStore:
         lex.add_passages(passages)
         self.lexical = lex
 
+    def count_lexical(self) -> int:
+        """Return total count of indexed passages in the active lexical store."""
+        if self.lexical is not None:
+            return self.lexical.count()
+        return 0
+
     def close(self) -> None:
         """Close SQLite lexical store connection if open."""
         if self.lexical is not None:
             self.lexical.close()
-            self.lexical = None
 
     @classmethod
     def load(cls, directory: str | Path) -> "KnowledgeStore":
-        path = Path(directory) / "knowledge.json"
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        store = cls()
-        store.add(
-            [
-                GaussianKnowledge(
-                    id=item["id"],
-                    text=item["text"],
-                    mu=np.asarray(item["mu"], dtype=float),
-                    sigma_diag=np.asarray(item["sigma_diag"], dtype=float),
-                    sigma_L=np.asarray(item["sigma_L"], dtype=float),
-                    metadata=item.get("metadata", {}),
-                )
-                for item in payload
-            ]
-        )
-        db_path = Path(directory) / "lexical.db"
+        path = Path(directory)
+        json_path = path / "knowledge.json"
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+
+        db_path = path / "lexical.db"
         if db_path.exists():
-            store.lexical = LexicalStore(db_path)
+            lex = LexicalStore(db_path)
+        else:
+            lex = LexicalStore(":memory:")
+        store = cls(lexical=lex)
+
+        for item in payload:
+            store.items[item["id"]] = GaussianKnowledge(
+                id=item["id"],
+                text=item["text"],
+                mu=np.asarray(item.get("mu", []), dtype=float),
+                sigma_diag=np.asarray(item.get("sigma_diag", []), dtype=float),
+                sigma_L=np.asarray(item.get("sigma_L", []), dtype=float),
+                metadata=item.get("metadata", {}),
+            )
+
+        if not db_path.exists() and store.items:
+            passages = [
+                (
+                    item.id,
+                    str(item.metadata.get("document_id", item.metadata.get("source_path", "default"))),
+                    item.text,
+                )
+                for item in store.items.values()
+            ]
+            store.lexical.add_passages(passages)
         return store
