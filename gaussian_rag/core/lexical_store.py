@@ -161,11 +161,37 @@ class LexicalStore:
         )
         self._conn.commit()
 
-    def add_passages(self, passages: list[tuple[str, str, str]]) -> int:
+    def count(self) -> int:
+        """Return total number of indexed passages in the FTS5 virtual table."""
+        cursor = self._conn.cursor()
+        cursor.execute("SELECT count(*) FROM passages_fts;")
+        return int(cursor.fetchone()[0])
+
+    def clear(self) -> None:
+        """Clear all indexed passages from the FTS5 virtual table."""
+        cursor = self._conn.cursor()
+        cursor.execute("DELETE FROM passages_fts;")
+        self._conn.commit()
+
+    def delete_passages(self, chunk_ids: list[str]) -> int:
+        """Delete passages matching the provided chunk IDs."""
+        if not chunk_ids:
+            return 0
+        cursor = self._conn.cursor()
+        cursor.executemany(
+            "DELETE FROM passages_fts WHERE chunk_id = ?;",
+            [(cid,) for cid in chunk_ids],
+        )
+        self._conn.commit()
+        return len(chunk_ids)
+
+    def add_passages(self, passages: list[tuple[str, str, str]], upsert: bool = True) -> int:
         """Add a batch of passages to the FTS5 index.
 
         Args:
             passages: List of tuples (chunk_id, document_id, text).
+            upsert: If True (default), removes existing rows with matching chunk_ids
+                    before inserting, preventing duplicate rows and index bloat.
 
         Returns:
             Number of passages inserted.
@@ -174,6 +200,13 @@ class LexicalStore:
             return 0
 
         cursor = self._conn.cursor()
+        if upsert:
+            chunk_ids = [(p[0],) for p in passages]
+            cursor.executemany(
+                "DELETE FROM passages_fts WHERE chunk_id = ?;",
+                chunk_ids,
+            )
+
         cursor.executemany(
             "INSERT INTO passages_fts(chunk_id, document_id, text) VALUES (?, ?, ?);",
             passages,
@@ -221,11 +254,6 @@ class LexicalStore:
         row = cursor.fetchone()
         return row["text"] if row else None
 
-    def count(self) -> int:
-        """Return total number of indexed passages."""
-        cursor = self._conn.cursor()
-        cursor.execute("SELECT count(*) as cnt FROM passages_fts;")
-        return int(cursor.fetchone()["cnt"])
 
     def close(self) -> None:
         """Close SQLite connection."""
