@@ -1,9 +1,17 @@
 from __future__ import annotations
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
+
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+    F = None  # type: ignore[assignment]
+    _TORCH_AVAILABLE = False
 
 
 class SigmaHead(nn.Module):
@@ -12,6 +20,11 @@ class SigmaHead(nn.Module):
     (diagonal and low-rank matrix) from sentence-transformer hidden states.
     """
     def __init__(self, dimension: int, rank: int = 8, floor: float = 1e-6):
+        if not _TORCH_AVAILABLE:  # pragma: no cover
+            raise ImportError(
+                "PyTorch is required for SigmaHead (background radiation training). "
+                "Install it with: pip install 'gaussian-rag[research]'"
+            )
         super().__init__()
         self.dimension = dimension
         self.rank = rank

@@ -22,7 +22,7 @@ from gaussian_rag.rag.disambiguation.router import route
 from gaussian_rag.rag.sense_cache import SenseCache
 from gaussian_rag.rag.generation.provider import MistralChatClient
 from gaussian_rag.rag.generation.generator import ProviderBackedGenerator
-from gaussian_rag.training.online_trainer import OnlineRadiationCollector
+from gaussian_rag.training.online_trainer import OnlineRadiationCollector, TORCH_AVAILABLE as _TRAINER_TORCH_AVAILABLE
 
 # Configuration
 BASE_STORE_DIR = Path(".full_run_store")
@@ -73,9 +73,19 @@ async def lifespan(app: FastAPI):
 
     cl_config = config.get("continual_learning", {"enabled": True, "train_every_n": 5})
     if cl_config.get("enabled", True):
-        radiation_collector = OnlineRadiationCollector(
-            train_every_n=cl_config.get("train_every_n", 5), emit_fn=_sse_emit
-        )
+        if not _TRAINER_TORCH_AVAILABLE:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "Continual learning is configured as enabled but PyTorch is not installed. "
+                "Background radiation training is DISABLED. "
+                "The dashboard will operate in inference-only mode. "
+                "To enable training: pip install 'gaussian-rag[research]'"
+            )
+            radiation_collector = None
+        else:
+            radiation_collector = OnlineRadiationCollector(
+                train_every_n=cl_config.get("train_every_n", 5), emit_fn=_sse_emit
+            )
     else:
         radiation_collector = None
 

@@ -40,6 +40,21 @@ DEFAULT_TRIGGER_N = 5  # new samples before a background retrain
 FINE_TUNE_EPOCHS = 2
 FINE_TUNE_BATCH = 4
 
+# Eagerly probe for PyTorch availability so we can log once at import time
+# instead of surfacing an opaque ModuleNotFoundError deep inside a thread.
+try:
+    import torch as _torch_probe  # noqa: F401
+    del _torch_probe
+    TORCH_AVAILABLE: bool = True
+except ImportError:  # pragma: no cover
+    TORCH_AVAILABLE = False
+    logger.warning(
+        "[OnlineTrainer] PyTorch not found — background radiation training is DISABLED. "
+        "The system will operate in inference-only mode. "
+        "To enable continual learning install: pip install 'gaussian-rag[research]'"
+    )
+
+
 class OnlineRadiationCollector:
     def __init__(
         self,
@@ -211,6 +226,15 @@ class OnlineRadiationCollector:
 
     def _background_train(self) -> None:
         """Fine-tune the SigmaHead on the accumulated corpus (background thread)."""
+        if not TORCH_AVAILABLE:  # pragma: no cover
+            msg = (
+                "⚠️ Background SigmaHead training skipped — PyTorch not installed. "
+                "Install it with: pip install 'gaussian-rag[research]'"
+            )
+            logger.warning("[OnlineTrainer] %s", msg)
+            self._emit("system_log", {"message": msg})
+            return
+
         if self._is_training.is_set():
             logger.debug("[OnlineTrainer] Training already running — skipping.")
             return

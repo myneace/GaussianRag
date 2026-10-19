@@ -46,6 +46,10 @@ dev = [
   "python-multipart>=0.0.9",
 ]
 research = [
+  # PyTorch is OPTIONAL — required only for background radiation training
+  # (continual SigmaHead fine-tuning in OnlineRadiationCollector).
+  # Without it, the library and dashboard operate in inference-only mode.
+  # Install: pip install 'gaussian-rag[research]'
   "torch>=2.2",
 ]
 

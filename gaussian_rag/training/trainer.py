@@ -5,10 +5,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import torch
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
 import numpy as np
+
+try:
+    import torch
+    import torch.optim as optim
+    from torch.utils.data import Dataset, DataLoader
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    torch = None  # type: ignore[assignment]
+    optim = None  # type: ignore[assignment]
+    Dataset = object  # type: ignore[assignment,misc]
+    DataLoader = None  # type: ignore[assignment]
+    _TORCH_AVAILABLE = False
 
 from gaussian_rag.core.gaussian_embedding import GaussianEmbedder
 from gaussian_rag.training.sigma_head import SigmaHead
@@ -99,6 +108,11 @@ class SigmaTrainer:
     last_epoch_loss: float | None = field(init=False, default=None)
     
     def __post_init__(self):
+        if not _TORCH_AVAILABLE:  # pragma: no cover
+            raise ImportError(
+                "PyTorch is required for SigmaTrainer (background radiation training). "
+                "Install it with: pip install 'gaussian-rag[research]'"
+            )
         # Initialize PyTorch module
         self.head = SigmaHead(
             dimension=self.embedder.dimension,

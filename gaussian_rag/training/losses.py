@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-import torch
+try:
+    import torch
+    _TORCH_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    torch = None  # type: ignore[assignment]
+    _TORCH_AVAILABLE = False
 
 
 def _sqrtm_spd(matrix: torch.Tensor, floor: float = 1e-6) -> torch.Tensor:
