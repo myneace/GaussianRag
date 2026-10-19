@@ -1,4 +1,4 @@
-"""High-level GaussianRAG facade — unified public API for the library.
+"""High-level GaussianRAG facade â€” unified public API for the library.
 
 This module provides a single entry-point class ``GaussianRAG`` that wires
 together all internal sub-systems:
@@ -18,7 +18,7 @@ Quick-start (3 lines)::
     rag.add_texts(["Never outshine the master.", "Always say less than necessary."])
     results = rag.search("How should I behave around powerful people?")
 
-Works standalone — no cloud tokens required.  Activate Cloudflare Clef and
+Works standalone â€” no cloud tokens required.  Activate Cloudflare Clef and
 LLM generation by passing ``use_clef=True`` and supplying API credentials.
 """
 from __future__ import annotations
@@ -37,6 +37,7 @@ from gaussian_rag.core.types import (
 )
 from gaussian_rag.creator.universal_ingestor import UniversalIngestor
 from gaussian_rag.rag.retrieval.retriever import GaussianRetriever
+from gaussian_rag.rag.retrieval.taxonomy_router import TaxonomyRouter
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +193,7 @@ class GaussianRAG:
                     "set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN"
                 )
 
-        # Optional generator — pass a pre-built generator instance via
+        # Optional generator â€” pass a pre-built generator instance via
         # rag._generator = <generator> after creation, or configure via
         # the existing pipeline in gaussian_rag.rag.generation.
         generator = None
@@ -415,13 +416,47 @@ class GaussianRAG:
     # Retrieval API
     # ------------------------------------------------------------------
 
+    def build_taxonomy(
+        self,
+        top_branches: int = 12,
+        leaf_size: int = 64,
+        seed: int = 17,
+    ) -> TaxonomyRouter:
+        """Build hierarchical taxonomy clustering over all ingested passages.
+
+        Prunes 60–80% of candidate search space during retrieval by routing queries
+        to relevant topic branches.
+
+        Parameters
+        ----------
+        top_branches:
+            Target number of top-level topic branches.
+        leaf_size:
+            Target number of items per leaf cluster.
+        seed:
+            Random seed for deterministic clustering.
+
+        Returns
+        -------
+        Constructed TaxonomyRouter instance attached to retriever.
+        """
+        router = TaxonomyRouter.build_from_store(
+            self._store,
+            top_branches=top_branches,
+            leaf_size=leaf_size,
+            seed=seed,
+        )
+        self._retriever.taxonomy = router
+        return router
+
     def search(
         self,
         query: str,
         top_k: int = 5,
         metric: str = "elk",
+        with_covariance: bool = False,
     ) -> list[RetrievedChunk]:
-        """Pure local hybrid retrieval — no LLM or cloud required.
+        """Pure local hybrid retrieval â€” no LLM or cloud required.
 
         Uses dense Gaussian ANN search combined with SQLite FTS5 lexical
         BM25 scoring for robust candidate selection, then ranks by the
@@ -444,7 +479,7 @@ class GaussianRAG:
         if not self._store.items:
             return []
 
-        qr: QueryRepresentation = self._embedder.encode_query(query)
+        qr: QueryRepresentation = self._embedder.encode_query(query, with_covariance=with_covariance)
         results = self._retriever.retrieve(
             qr,
             top_k=top_k,
@@ -458,7 +493,7 @@ class GaussianRAG:
         question: str,
         top_k: int = 5,
     ) -> dict[str, Any]:
-        """End-to-end RAG pipeline: retrieve → (optionally) gate → (optionally) generate.
+        """End-to-end RAG pipeline: retrieve â†’ (optionally) gate â†’ (optionally) generate.
 
         Works fully locally when no cloud components are configured.  Activates
         Cloudflare Clef gating and LLM answer generation when those are set up.
@@ -473,10 +508,10 @@ class GaussianRAG:
         Returns
         -------
         A dict with keys:
-        - ``"question"`` — the original question.
-        - ``"retrieved_chunks"`` — list of ``RetrievedChunk`` objects.
-        - ``"context"`` — concatenated passage texts used for generation.
-        - ``"answer"`` — LLM-generated answer (empty string if no generator).
+        - ``"question"`` â€” the original question.
+        - ``"retrieved_chunks"`` â€” list of ``RetrievedChunk`` objects.
+        - ``"context"`` â€” concatenated passage texts used for generation.
+        - ``"answer"`` â€” LLM-generated answer (empty string if no generator).
         """
         chunks = self.search(question, top_k=top_k)
 
@@ -535,6 +570,8 @@ class GaussianRAG:
                 "No save directory specified. Pass 'directory' or set 'save_dir' in GaussianRAG.create()."
             )
         self._store.save(target)
+        if self._retriever.taxonomy is not None and not self._retriever.taxonomy.is_empty:
+            self._retriever.taxonomy.save(target)
         self._save_dir = target
         logger.info("GaussianRAG: saved %d items to '%s'", len(self._store.items), target)
         return target
@@ -567,6 +604,11 @@ class GaussianRAG:
     def ingestor(self) -> UniversalIngestor:
         """The underlying universal ingestor."""
         return self._ingestor
+
+    @property
+    def taxonomy(self) -> TaxonomyRouter | None:
+        """The underlying hierarchical taxonomy router, if built or configured."""
+        return self._retriever.taxonomy
 
     def close(self) -> None:
         """Close open resources (e.g. SQLite lexical database)."""
