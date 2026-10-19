@@ -92,7 +92,7 @@ class GaussianRetriever:
         allowed_ids: set[str] | None = None,
         query_text: str | None = None,
     ) -> list[RetrievedChunk]:
-        if allowed_ids is None and self.taxonomy is not None:
+        if allowed_ids is None and self.taxonomy is not None and not self.taxonomy.is_empty:
             routed_allowed, _ = self.taxonomy.route_query(query.mu)
             allowed_ids = routed_allowed
 
@@ -414,18 +414,32 @@ class GaussianRetriever:
         """Synchronous entry-point for the MMASA parallel retriever.
 
         Wraps `retrieve_multi_sense_async` in a blocking call so existing
-        callers don't need to be rewritten as async.
+        callers don't need to be rewritten as async. Safely detects existing
+        event loops (e.g., FastAPI, Jupyter, async services) and offloads to
+        a dedicated thread pool when a loop is already running.
         """
-        return asyncio.run(
-            self.retrieve_multi_sense_async(
-                senses,
-                top_k=top_k,
-                metric=metric,
-                fusion=fusion,
-                adaptive=adaptive,
-                buffer_size=buffer_size,
+        def _run_in_worker_loop():
+            return asyncio.run(
+                self.retrieve_multi_sense_async(
+                    senses,
+                    top_k=top_k,
+                    metric=metric,
+                    fusion=fusion,
+                    adaptive=adaptive,
+                    buffer_size=buffer_size,
+                )
             )
-        )
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                return executor.submit(_run_in_worker_loop).result()
+        else:
+            return _run_in_worker_loop()
 
     # ------------------------------------------------------------------ #
     #  Shared synthesis helper (used by both serial and parallel paths)  #
