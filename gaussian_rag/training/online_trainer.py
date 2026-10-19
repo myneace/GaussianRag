@@ -22,6 +22,7 @@ Thread-safety strategy
 
 from __future__ import annotations
 
+import os
 import json
 import logging
 import threading
@@ -38,7 +39,6 @@ DEFAULT_STATS_PATH = Path("data/training/radiation_stats.json")
 DEFAULT_TRIGGER_N = 5  # new samples before a background retrain
 FINE_TUNE_EPOCHS = 2
 FINE_TUNE_BATCH = 4
-
 
 class OnlineRadiationCollector:
     def __init__(
@@ -253,12 +253,12 @@ class OnlineRadiationCollector:
 
             trainer.fit(dataset, epochs=FINE_TUNE_EPOCHS, batch_size=FINE_TUNE_BATCH)
 
-            # Atomic write: temp file → rename
+            # Atomic write: temp file → atomic replace (cross-platform, Windows-safe)
             # Use dimension-specific filename
             actual_weights_path = Path(f".gaussian_rag_weights_{embedder.dimension}.pt")
             tmp = actual_weights_path.with_suffix(".pt.tmp")
             trainer.save_model(str(tmp))
-            tmp.rename(actual_weights_path)
+            os.replace(tmp, actual_weights_path)
 
             elapsed = time.monotonic() - start
 
