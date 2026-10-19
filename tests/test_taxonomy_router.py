@@ -159,3 +159,39 @@ async def test_live_route_query_clef() -> None:
         # Check that finance chunks are retained and majority of unrelated chunks are pruned
         has_fin = any(cid.startswith("fin_") for cid in allowed_ids)
         assert has_fin, f"Expected finance chunks in allowed_ids, got: {allowed_ids}"
+
+
+def test_taxonomy_router_default_constructor() -> None:
+    """Verify BUG-03: TaxonomyRouter() can be instantiated with default empty structures."""
+    router = TaxonomyRouter()
+    assert router.is_empty
+    assert router.item_count == 0
+    assert router.leaf_node_count == 0
+    assert router.top_node_count == 0
+
+    allowed, info = router.route_query(np.zeros(16))
+    assert allowed == set()
+    assert info["status"] == "empty"
+    assert info["scope_items"] == 0
+
+
+def test_taxonomy_router_constructor_with_store() -> None:
+    """Verify TaxonomyRouter can be constructed directly via store argument."""
+    store = _create_sample_multi_domain_store()
+    router = TaxonomyRouter(store=store, top_branches=3, leaf_size=4)
+    assert not router.is_empty
+    assert router.item_count == 24
+
+    # Also test positional argument TaxonomyRouter(store)
+    router_pos = TaxonomyRouter(store, top_branches=3, leaf_size=4)
+    assert not router_pos.is_empty
+    assert router_pos.item_count == 24
+
+
+def test_taxonomy_router_readme_quickstart_compatibility() -> None:
+    """Verify README quickstart snippet 'router = gr.TaxonomyRouter()' executes without error."""
+    import gaussian_rag as gr
+    router = gr.TaxonomyRouter()
+    assert router is not None
+    assert router.is_empty
+

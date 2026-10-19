@@ -269,12 +269,12 @@ def _build_taxonomy_tree(
 # TaxonomyRouter — the public interface for Phase 4
 # ──────────────────────────────────────────────────────────────────────────────
 
-@dataclass
 class TaxonomyRouter:
     """Hierarchical branch-pruning router for GaussianRetriever candidate pre-filtering.
 
     Build with `TaxonomyRouter.build_from_store(store)` or load from disk with
-    `TaxonomyRouter.load(store_directory)`.
+    `TaxonomyRouter.load(store_directory)`, or instantiate an empty router with
+    `TaxonomyRouter()` or `TaxonomyRouter(store)`.
 
     Once built, call `route_query(query_mu)` to get a set of allowed chunk IDs
     that can be used to filter the ANN candidate pool before manifold reranking.
@@ -284,8 +284,59 @@ class TaxonomyRouter:
         - `taxonomy.npz`   — leaf centroid matrix (float32).
     """
 
-    _tree: dict[str, Any] = field(repr=False)
-    _centroids: np.ndarray = field(repr=False)
+    def __init__(
+        self,
+        tree_or_store: Any = None,
+        centroids: np.ndarray | None = None,
+        *,
+        _tree: dict[str, Any] | None = None,
+        _centroids: np.ndarray | None = None,
+        store: Any = None,
+        tree: dict[str, Any] | None = None,
+        top_branches: int = DEFAULT_TOP_BRANCHES,
+        leaf_size: int = DEFAULT_LEAF_SIZE,
+        secondary_margin: float = DEFAULT_SECONDARY_MARGIN,
+        seed: int = 17,
+    ) -> None:
+        target_store = store
+        if tree_or_store is not None and hasattr(tree_or_store, "values"):
+            target_store = tree_or_store
+
+        if target_store is not None:
+            chunks = target_store.values()
+            if chunks:
+                built = self.build_from_store(
+                    target_store,
+                    top_branches=top_branches,
+                    leaf_size=leaf_size,
+                    secondary_margin=secondary_margin,
+                    seed=seed,
+                )
+                self._tree = built._tree
+                self._centroids = built._centroids
+                return
+
+        resolved_tree = (
+            _tree
+            if _tree is not None
+            else (tree if tree is not None else (tree_or_store if isinstance(tree_or_store, dict) else {}))
+        )
+        resolved_centroids = (
+            _centroids
+            if _centroids is not None
+            else (centroids if centroids is not None else np.empty((0, 0), dtype=np.float32))
+        )
+        self._tree = resolved_tree
+        self._centroids = np.asarray(resolved_centroids, dtype=np.float32)
+
+    @property
+    def is_empty(self) -> bool:
+        """Return True if the taxonomy index is empty and unbuilt."""
+        return (
+            len(self._centroids) == 0
+            or not self._tree
+            or not self._tree.get("leaf_ids")
+        )
 
     # ── Construction ──────────────────────────────────────────────────────────
 
@@ -350,6 +401,9 @@ class TaxonomyRouter:
 
     def save(self, directory: str | Path) -> None:
         """Persist taxonomy alongside knowledge.json / lexical.db."""
+        if self.is_empty:
+            logger.debug("TaxonomyRouter is empty; skipping save.")
+            return
         path = Path(directory)
         path.mkdir(parents=True, exist_ok=True)
         (path / "taxonomy.json").write_text(
@@ -404,6 +458,17 @@ class TaxonomyRouter:
             strings from the activated leaf clusters, and routing_info contains
             diagnostic metadata (routes, scope_items, tree statistics).
         """
+        if self.is_empty:
+            return set(), {
+                "routes": [],
+                "selected_leaf_count": 0,
+                "scope_items": 0,
+                "tree_items": 0,
+                "top_node_count": 0,
+                "leaf_node_count": 0,
+                "status": "empty",
+            }
+
         vector = np.asarray(query_mu, dtype=np.float32)
         norm = float(np.linalg.norm(vector))
         if norm > 1e-12:
@@ -492,6 +557,19 @@ class TaxonomyRouter:
         Returns:
             (allowed_ids, routing_info) containing the set of chunk IDs in the selected branches.
         """
+        if self.is_empty:
+            return set(), {
+                "selected_branches": [],
+                "primary_branch": "",
+                "branch_labels": {},
+                "probabilities": {},
+                "elapsed_ms": 0.0,
+                "scope_items": 0,
+                "tree_items": 0,
+                "pruning_ratio": 0.0,
+                "status": "empty",
+            }
+
         top_nodes = [node for node in self._tree.get("nodes", []) if node["depth"] == 1]
         if not top_nodes:
             raise ValueError("Taxonomy tree contains no top-level branches for routing")
